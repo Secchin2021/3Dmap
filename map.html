@@ -117,58 +117,69 @@
     <div id="poi-container" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
 
     <!-- UI Overlay: Top Navigation Bar -->
-    <div class="absolute top-4 left-4 right-4 md:right-auto md:w-[430px] z-30 pointer-events-none">
-        <div id="top-card" class="glass-panel rounded-3xl p-4 shadow-2xl pointer-events-auto transition-colors duration-500">
-            <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-md flex-shrink-0">
-                        <i data-lucide="map-pin" class="w-5 h-5"></i>
+    <div id="top-nav-wrapper" class="absolute top-4 left-4 right-16 md:right-auto md:w-[430px] z-30 pointer-events-none">
+        <div id="top-card" class="glass-panel rounded-2xl md:rounded-3xl p-2.5 md:p-4 shadow-2xl pointer-events-auto transition-all duration-300">
+            <div class="flex items-center justify-between gap-2">
+                <div id="top-card-header-trigger" class="flex items-center space-x-2.5 md:space-x-3 min-w-0 cursor-pointer md:cursor-default">
+                    <div class="w-8 h-8 md:w-10 md:h-10 rounded-xl md:rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-md flex-shrink-0">
+                        <i data-lucide="map-pin" class="w-4 h-4 md:w-5 md:h-5"></i>
                     </div>
-                    <div>
-                        <h1 id="title-text" class="text-gray-900 font-extrabold text-base tracking-tight leading-none">関西大学 千里山キャンパス</h1>
-                        <p id="subtitle-text" class="text-gray-500 text-xs mt-1 font-medium">3D Apple Maps View</p>
+                    <div class="min-w-0">
+                        <h1 id="title-text" class="text-gray-900 font-extrabold text-xs sm:text-sm md:text-base tracking-tight leading-none truncate">関西大学 千里山キャンパス</h1>
+                        <p id="subtitle-text" class="hidden md:block text-gray-500 text-xs mt-1 font-medium">3D Apple Maps View</p>
                     </div>
                 </div>
 
-                <!-- Day/Night Toggle -->
-                <button id="theme-btn" title="昼/夜モード切替" class="flex items-center space-x-1.5 px-3 py-2 rounded-2xl bg-black/5 hover:bg-black/10 active:scale-95 transition text-gray-700 border border-black/5">
-                    <i id="theme-icon" data-lucide="moon" class="w-4 h-4"></i>
-                    <span id="theme-label" class="text-xs font-extrabold">夜モード</span>
-                </button>
+                <div class="flex items-center space-x-1.5 flex-shrink-0">
+                    <!-- Day/Night Toggle -->
+                    <button id="theme-btn" title="昼/夜モード切替" class="flex items-center space-x-1 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl md:rounded-2xl bg-black/5 hover:bg-black/10 active:scale-95 transition text-gray-700 border border-black/5">
+                        <i id="theme-icon" data-lucide="moon" class="w-3.5 h-3.5 md:w-4 md:h-4"></i>
+                        <span id="theme-label" class="text-[11px] md:text-xs font-extrabold">夜モード</span>
+                    </button>
+
+                    <!-- Mobile-Only Collapse / Expand Button -->
+                    <button id="mobile-collapse-btn" title="メニューを収納 / 展開" aria-expanded="false"
+                        class="md:hidden w-8 h-8 rounded-xl bg-black/5 hover:bg-black/10 active:scale-95 transition flex items-center justify-center text-gray-700 border border-black/5">
+                        <i id="mobile-collapse-icon" data-lucide="chevron-down" class="w-4 h-4 transition-transform duration-200"></i>
+                    </button>
+                </div>
             </div>
 
-            <!-- Action Buttons Row: Facility Navigation ON/OFF & Firework Boost Button -->
-            <div class="mt-3 grid grid-cols-2 gap-2">
-                <!-- Facility Info & Navigation Toggle Button -->
-                <button id="labels-btn" title="施設説明ナビゲーションの表示・非表示を切り替えます" class="flex items-center justify-between px-3 py-2 rounded-2xl bg-blue-600 text-white shadow-md hover:bg-blue-700 active:scale-95 transition border border-blue-400/40">
-                    <div class="flex items-center space-x-2">
-                        <i data-lucide="message-square-more" class="w-4 h-4 flex-shrink-0"></i>
-                        <span class="text-xs font-extrabold tracking-tight">施設説明ナビ</span>
+            <!-- Collapsible Body on Mobile (Always visible on Desktop md+) -->
+            <div id="top-card-body" class="hidden md:block">
+                <!-- Action Buttons Row: Facility Navigation ON/OFF & Firework Boost Button -->
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                    <!-- Facility Info & Navigation Toggle Button -->
+                    <button id="labels-btn" title="施設説明ナビゲーションの表示・非表示を切り替えます" class="flex items-center justify-between px-3 py-2 rounded-2xl bg-blue-600 text-white shadow-md hover:bg-blue-700 active:scale-95 transition border border-blue-400/40">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="message-square-more" class="w-4 h-4 flex-shrink-0"></i>
+                            <span class="text-xs font-extrabold tracking-tight">施設説明ナビ</span>
+                        </div>
+                        <span id="labels-status" class="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/25 text-white ml-1">ON</span>
+                    </button>
+
+                    <!-- Powerful Fireworks Boost Button -->
+                    <button id="firework-boost-btn" title="博物館正面の花火を超強力なスターマイン連発にします" class="flex items-center justify-between px-3 py-2 rounded-2xl bg-slate-800/90 text-amber-300 shadow-md hover:bg-slate-900 active:scale-95 transition border border-amber-400/30">
+                        <div class="flex items-center space-x-2">
+                            <i data-lucide="sparkles" class="w-4 h-4 flex-shrink-0 text-amber-400"></i>
+                            <span class="text-xs font-extrabold tracking-tight">花火を強力化</span>
+                        </div>
+                        <span id="firework-boost-status" class="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/15 text-amber-200 ml-1">OFF</span>
+                    </button>
+                </div>
+
+                <!-- Quick Search Bar -->
+                <div class="mt-2.5 relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    <input id="search-input" type="text" placeholder="施設・学舎・テント番号(1A〜50B)・ゴミ箱を検索..." 
+                        class="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-gray-100/80 border border-transparent focus:border-blue-400 focus:bg-white focus:outline-none transition text-gray-800 placeholder-gray-400" />
+                    <button id="clear-search-btn" class="hidden absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                    </button>
+
+                    <!-- Search Results Dropdown -->
+                    <div id="search-results" class="hidden absolute left-0 right-0 top-full mt-1.5 max-h-56 overflow-y-auto rounded-2xl glass-panel shadow-2xl p-1.5 z-40 space-y-1 text-xs">
                     </div>
-                    <span id="labels-status" class="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/25 text-white ml-1">ON</span>
-                </button>
-
-                <!-- Powerful Fireworks Boost Button -->
-                <button id="firework-boost-btn" title="博物館正面の花火を超強力なスターマイン連発にします" class="flex items-center justify-between px-3 py-2 rounded-2xl bg-slate-800/90 text-amber-300 shadow-md hover:bg-slate-900 active:scale-95 transition border border-amber-400/30">
-                    <div class="flex items-center space-x-2">
-                        <i data-lucide="sparkles" class="w-4 h-4 flex-shrink-0 text-amber-400"></i>
-                        <span class="text-xs font-extrabold tracking-tight">花火を強力化</span>
-                    </div>
-                    <span id="firework-boost-status" class="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/15 text-amber-200 ml-1">OFF</span>
-                </button>
-            </div>
-
-            <!-- Quick Search Bar -->
-            <div class="mt-2.5 relative">
-                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                <input id="search-input" type="text" placeholder="施設・学舎・テント番号(1A〜50B)・ゴミ箱を検索..." 
-                    class="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-gray-100/80 border border-transparent focus:border-blue-400 focus:bg-white focus:outline-none transition text-gray-800 placeholder-gray-400" />
-                <button id="clear-search-btn" class="hidden absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                </button>
-
-                <!-- Search Results Dropdown -->
-                <div id="search-results" class="hidden absolute left-0 right-0 top-full mt-1.5 max-h-56 overflow-y-auto rounded-2xl glass-panel shadow-2xl p-1.5 z-40 space-y-1 text-xs">
                 </div>
             </div>
         </div>
@@ -2257,12 +2268,29 @@
                 .start();
         }
 
-        function focusOnPoi(id) {
+        function focusOnPoi(id, closer = false) {
             const poi = POI_DATA.find(p => p.id === id) || TENT_AND_BIN_DATA.find(t => t.id === id);
             if (!poi) return;
             selectedPoiId = id;
 
-            animateCamera(poi.camPos, [poi.pos[0], 0, poi.pos[2]]);
+            const tx = poi.pos[0];
+            const tz = poi.pos[2];
+
+            if (!is3D) {
+                const topY = closer ? 150 : 210;
+                animateCamera([tx, topY, tz + 1], [tx, 0, tz]);
+            } else {
+                const dx = poi.camPos[0] - tx;
+                const dy = poi.camPos[1];
+                const dz = poi.camPos[2] - tz;
+                // Keep a comfortable, pulled-back framing so facilities are not over-zoomed
+                const scale = closer ? 1.35 : 1.85;
+                animateCamera(
+                    [tx + dx * scale, Math.max(48, dy * scale), tz + dz * scale],
+                    [tx, 0, tz]
+                );
+            }
+
             if (showLabels) {
                 showDetailCard(poi);
             }
@@ -2644,6 +2672,8 @@
                 detailPanel.classList.replace('glass-panel', 'glass-panel-dark');
                 searchResults.classList.replace('glass-panel', 'glass-panel-dark');
                 document.getElementById('title-text').classList.replace('text-gray-900', 'text-white');
+                const mobCollapseBtn = document.getElementById('mobile-collapse-btn');
+                if (mobCollapseBtn) mobCollapseBtn.classList.replace('text-gray-700', 'text-gray-200');
                 document.getElementById('detail-title').classList.replace('text-gray-900', 'text-white');
                 document.getElementById('detail-desc').classList.replace('text-gray-600', 'text-gray-300');
 
@@ -2701,6 +2731,8 @@
                 detailPanel.classList.replace('glass-panel-dark', 'glass-panel');
                 searchResults.classList.replace('glass-panel-dark', 'glass-panel');
                 document.getElementById('title-text').classList.replace('text-white', 'text-gray-900');
+                const mobCollapseBtn = document.getElementById('mobile-collapse-btn');
+                if (mobCollapseBtn) mobCollapseBtn.classList.replace('text-gray-200', 'text-gray-700');
                 document.getElementById('detail-title').classList.replace('text-white', 'text-gray-900');
                 document.getElementById('detail-desc').classList.replace('text-gray-300', 'text-gray-600');
 
@@ -2718,6 +2750,42 @@
         // 10. UI Setup & Interactions
         // ==========================================
         function setupUI() {
+            // Mobile-Only Top Card Compact Collapse / Expand
+            const mobileCollapseBtn = document.getElementById('mobile-collapse-btn');
+            const mobileCollapseIcon = document.getElementById('mobile-collapse-icon');
+            const topCardBody = document.getElementById('top-card-body');
+            const topCardHeaderTrigger = document.getElementById('top-card-header-trigger');
+            let isMobileCollapsed = true;
+
+            const setMobileCollapsed = (collapsed) => {
+                isMobileCollapsed = collapsed;
+                if (!topCardBody) return;
+                if (isMobileCollapsed) {
+                    topCardBody.classList.add('hidden');
+                    if (mobileCollapseIcon) mobileCollapseIcon.style.transform = 'rotate(0deg)';
+                    if (mobileCollapseBtn) mobileCollapseBtn.setAttribute('aria-expanded', 'false');
+                } else {
+                    topCardBody.classList.remove('hidden');
+                    if (mobileCollapseIcon) mobileCollapseIcon.style.transform = 'rotate(180deg)';
+                    if (mobileCollapseBtn) mobileCollapseBtn.setAttribute('aria-expanded', 'true');
+                }
+            };
+
+            if (mobileCollapseBtn) {
+                mobileCollapseBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    setMobileCollapsed(!isMobileCollapsed);
+                });
+            }
+
+            if (topCardHeaderTrigger) {
+                topCardHeaderTrigger.addEventListener('click', () => {
+                    if (window.innerWidth < 768) {
+                        setMobileCollapsed(!isMobileCollapsed);
+                    }
+                });
+            }
+
             // Theme toggle
             document.getElementById('theme-btn').addEventListener('click', toggleTheme);
 
@@ -2925,10 +2993,10 @@
                 hideDetailCard();
             });
 
-            // Detail Card Close
+            // Detail Card Close & Closer Zoom
             document.getElementById('close-detail-btn').addEventListener('click', hideDetailCard);
             document.getElementById('detail-zoom-btn').addEventListener('click', () => {
-                if (selectedPoiId) focusOnPoi(selectedPoiId);
+                if (selectedPoiId) focusOnPoi(selectedPoiId, true);
             });
 
             // Quick Category Pills
@@ -3012,6 +3080,9 @@
                         searchResults.classList.add('hidden');
                         searchInput.value = '';
                         clearBtn.classList.add('hidden');
+                        if (window.innerWidth < 768) {
+                            setMobileCollapsed(true);
+                        }
                     });
                 });
             });
