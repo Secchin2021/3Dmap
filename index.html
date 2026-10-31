@@ -158,20 +158,6 @@
                 </button>
             </div>
 
-            <!-- Wide Field of View (FOV) Slider & Preset Control -->
-            <div class="mt-2.5 flex items-center justify-between px-3 py-1.5 rounded-2xl bg-black/5 border border-black/5 space-x-2">
-                <div class="flex items-center space-x-1.5 flex-shrink-0">
-                    <i data-lucide="maximize-2" class="w-3.5 h-3.5 text-indigo-500"></i>
-                    <span id="fov-title" class="text-[11px] font-extrabold text-gray-700">視野の広さ</span>
-                </div>
-                <input id="fov-slider" type="range" min="30" max="85" value="55" step="1"
-                    class="w-full h-1.5 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
-                <button id="fov-preset-btn" title="クリックで標準・広角・超広角を切り替え"
-                    class="flex-shrink-0 px-2 py-0.5 rounded-lg bg-indigo-600 text-white text-[10px] font-extrabold hover:bg-indigo-700 active:scale-95 transition">
-                    <span id="fov-value">広角 55°</span>
-                </button>
-            </div>
-
             <!-- Quick Search Bar -->
             <div class="mt-2.5 relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
@@ -202,11 +188,12 @@
             3D
         </button>
 
-        <!-- Wide FOV Quick Toggle -->
-        <button id="wide-btn" title="視野を広くする (標準 / 広角 / 超広角)" class="w-11 h-11 rounded-2xl glass-panel shadow-lg flex flex-col items-center justify-center text-indigo-600 hover:scale-105 active:scale-95 transition">
-            <i data-lucide="scan" class="w-4 h-4"></i>
-            <span class="text-[9px] font-extrabold leading-none mt-0.5">広角</span>
-        </button>
+        <!-- Single FOV Rotary Toggle (Exact Attached Shape Icon Only) -->
+        <div id="fov-toggle" title="視野の広さトグル (回して調整 / クリックで切替)"
+            class="relative w-12 h-12 flex items-center justify-center cursor-grab active:cursor-grabbing select-none touch-none hover:scale-110 transition">
+            <img id="fov-toggle-icon" src="data:image/png;base64,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" alt="視野トグル" draggable="false"
+                class="w-12 h-12 drop-shadow-lg transition-transform duration-150 ease-out pointer-events-none select-none" />
+        </div>
 
         <!-- Zoom Controls -->
         <div class="flex flex-col rounded-2xl glass-panel shadow-lg overflow-hidden border border-white/40">
@@ -2657,8 +2644,6 @@
                 detailPanel.classList.replace('glass-panel', 'glass-panel-dark');
                 searchResults.classList.replace('glass-panel', 'glass-panel-dark');
                 document.getElementById('title-text').classList.replace('text-gray-900', 'text-white');
-                const fovTitle = document.getElementById('fov-title');
-                if (fovTitle) fovTitle.classList.replace('text-gray-700', 'text-gray-200');
                 document.getElementById('detail-title').classList.replace('text-gray-900', 'text-white');
                 document.getElementById('detail-desc').classList.replace('text-gray-600', 'text-gray-300');
 
@@ -2716,8 +2701,6 @@
                 detailPanel.classList.replace('glass-panel-dark', 'glass-panel');
                 searchResults.classList.replace('glass-panel-dark', 'glass-panel');
                 document.getElementById('title-text').classList.replace('text-white', 'text-gray-900');
-                const fovTitle = document.getElementById('fov-title');
-                if (fovTitle) fovTitle.classList.replace('text-gray-200', 'text-gray-700');
                 document.getElementById('detail-title').classList.replace('text-white', 'text-gray-900');
                 document.getElementById('detail-desc').classList.replace('text-gray-300', 'text-gray-600');
 
@@ -2804,23 +2787,33 @@
                 }
             });
 
-            // Field of View (FOV / Wide Angle) Slider & Preset Controls
-            const fovSlider = document.getElementById('fov-slider');
-            const fovValue = document.getElementById('fov-value');
-            const fovPresetBtn = document.getElementById('fov-preset-btn');
-            const wideBtn = document.getElementById('wide-btn');
+            // Single Field of View (FOV) Rotary Toggle Control (Using the exact attached shape icon)
+            const fovToggle = document.getElementById('fov-toggle');
+            const fovToggleIcon = document.getElementById('fov-toggle-icon');
 
-            const applyFov = (newFov, smooth = false) => {
+            let dialRotationDeg = 0;
+
+            const syncDialVisuals = (clampedFov, customDeg = null) => {
+                if (customDeg !== null) {
+                    dialRotationDeg = customDeg;
+                } else {
+                    dialRotationDeg = ((clampedFov - 30) / (85 - 30)) * 270;
+                }
+                if (fovToggleIcon) {
+                    fovToggleIcon.style.transform = `rotate(${dialRotationDeg}deg)`;
+                }
+                if (fovToggle) {
+                    fovToggle.title = `視野の広さ: ${clampedFov}° (回して調整 / クリックで切替)`;
+                }
+            };
+
+            const applyFov = (newFov, smooth = false, customDeg = null) => {
                 const clamped = Math.max(30, Math.min(85, Math.round(newFov)));
-                if (fovSlider) fovSlider.value = clamped;
-                let prefix = '標準';
-                if (clamped >= 68) prefix = '超広角';
-                else if (clamped >= 48) prefix = '広角';
-                if (fovValue) fovValue.textContent = `${prefix} ${clamped}°`;
+                syncDialVisuals(clamped, customDeg);
 
                 if (smooth) {
                     new TWEEN.Tween(camera)
-                        .to({ fov: clamped }, 350)
+                        .to({ fov: clamped }, 320)
                         .easing(TWEEN.Easing.Quadratic.Out)
                         .onUpdate(() => camera.updateProjectionMatrix())
                         .start();
@@ -2830,22 +2823,85 @@
                 }
             };
 
-            if (fovSlider) {
-                fovSlider.addEventListener('input', (e) => {
-                    applyFov(Number(e.target.value), false);
-                });
-            }
+            // Initialize toggle at 0° rotation (default FOV 55°)
+            syncDialVisuals(55, 0);
 
-            const cycleFovPreset = () => {
+            // Step-rotate the 8-lobed toggle by +45° (1 lobe) on click/tap
+            const stepRotateToggle = () => {
+                const presets = [38, 48, 55, 68, 82];
                 const cur = Math.round(camera.fov);
-                // Cycle: 55° (広角) -> 75° (超広角パノラマ) -> 38° (標準) -> 55°
-                if (cur < 48) applyFov(55, true);
-                else if (cur < 68) applyFov(75, true);
-                else applyFov(38, true);
+                const nextPreset = presets.find(p => p > cur + 2) || presets[0];
+                applyFov(nextPreset, true, dialRotationDeg + 45);
             };
 
-            if (fovPresetBtn) fovPresetBtn.addEventListener('click', cycleFovPreset);
-            if (wideBtn) wideBtn.addEventListener('click', cycleFovPreset);
+            // Attach interactive rotary drag, wheel spin, and click-toggle to the single shape toggle
+            if (fovToggle) {
+                let dragging = false;
+                let moved = false;
+                let startAngle = 0;
+                let startFov = 55;
+                let startX = 0;
+                let startY = 0;
+                let baseDeg = 0;
+
+                const getPointerAngleDeg = (clientX, clientY) => {
+                    const rect = fovToggle.getBoundingClientRect();
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    return Math.atan2(clientY - cy, clientX - cx) * (180 / Math.PI);
+                };
+
+                fovToggle.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    dragging = true;
+                    moved = false;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    startAngle = getPointerAngleDeg(e.clientX, e.clientY);
+                    startFov = camera.fov;
+                    baseDeg = dialRotationDeg;
+                    if (fovToggleIcon) fovToggleIcon.style.transition = 'none';
+                    fovToggle.setPointerCapture(e.pointerId);
+                });
+
+                fovToggle.addEventListener('pointermove', (e) => {
+                    if (!dragging) return;
+                    const dx = e.clientX - startX;
+                    const dy = e.clientY - startY;
+                    if (Math.hypot(dx, dy) > 4) moved = true;
+                    if (!moved) return;
+
+                    let angleDiff = getPointerAngleDeg(e.clientX, e.clientY) - startAngle;
+                    if (angleDiff > 180) angleDiff -= 360;
+                    if (angleDiff < -180) angleDiff += 360;
+
+                    const linearDelta = (dx - dy) * 0.45;
+                    const effectiveDegDelta = Math.abs(angleDiff) > Math.abs(linearDelta) ? angleDiff : linearDelta;
+                    const targetFov = Math.max(30, Math.min(85, startFov + effectiveDegDelta * 0.28));
+                    applyFov(targetFov, false, baseDeg + effectiveDegDelta);
+                });
+
+                const endDrag = (e) => {
+                    if (!dragging) return;
+                    dragging = false;
+                    if (fovToggleIcon) fovToggleIcon.style.transition = '';
+                    try { fovToggle.releasePointerCapture(e.pointerId); } catch (_) {}
+                    if (!moved) {
+                        stepRotateToggle();
+                    }
+                };
+
+                fovToggle.addEventListener('pointerup', endDrag);
+                fovToggle.addEventListener('pointercancel', endDrag);
+
+                fovToggle.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const step = e.deltaY > 0 ? 3 : -3;
+                    const nextFov = Math.max(30, Math.min(85, camera.fov + step));
+                    applyFov(nextFov, false, dialRotationDeg + step * 5);
+                }, { passive: false });
+            }
 
             // Zoom In / Out
             document.getElementById('zoom-in-btn').addEventListener('click', () => {
