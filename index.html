@@ -31,31 +31,41 @@
         /* Apple Maps-like frosted glass */
         .glass-panel {
             background: rgba(255, 255, 255, 0.88);
-            backdrop-filter: blur(28px) saturate(200%);
-            -webkit-backdrop-filter: blur(28px) saturate(200%);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
             border: 1px solid rgba(255, 255, 255, 0.6);
         }
 
         .glass-panel-dark {
             background: rgba(22, 32, 51, 0.88);
-            backdrop-filter: blur(28px) saturate(200%);
-            -webkit-backdrop-filter: blur(28px) saturate(200%);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
             border: 1px solid rgba(255, 255, 255, 0.15);
         }
 
-        /* POI Marker styling */
+        @media (max-width: 767px) {
+            .glass-panel, .glass-panel-dark {
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+            }
+        }
+
+        /* POI Marker styling (GPU-composited translate3d without layout thrashing) */
         .poi-marker {
             position: absolute;
-            transform: translate(-50%, -100%);
+            top: 0;
+            left: 0;
             cursor: pointer;
             pointer-events: auto;
-            transition: transform 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             will-change: transform;
         }
 
         .poi-marker:hover {
-            transform: translate(-50%, -115%) scale(1.18);
             z-index: 50 !important;
+        }
+
+        .poi-marker:hover .poi-pin {
+            transform: scale(1.18);
         }
 
         .poi-pin {
@@ -608,12 +618,19 @@
         // ==========================================
         // 2. Global State & App Variables
         // ==========================================
+        const IS_MOBILE = window.innerWidth < 768 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const CYL_SEGMENTS = IS_MOBILE ? 20 : 28;
+        const UNIT_BOX_GEO = new THREE.BoxGeometry(1, 1, 1);
+        const UNIT_CYL_GEO = new THREE.CylinderGeometry(1, 1, 1, CYL_SEGMENTS);
+
         let scene, camera, renderer, controls;
         let isNight = false;
         let is3D = true;
         let showLabels = true;
         let isFireworkBoost = false;
         let selectedPoiId = null;
+        let poiDirty = true;
+        let pointerDownPos = { x: 0, y: 0 };
 
         // Dynamic Lighting & Materials References
         let ambientLight, sunLight, moonLight;
@@ -816,8 +833,8 @@
 
         // 3.5 Apple Park Style Glowing Ribbon Window & Louver Textures
         function createAppleParkWindowTextures(wallColorHex, floors = 4, repeatX = 4, style = 'ribbon') {
-            const width = 512;
-            const height = 256;
+            const width = IS_MOBILE ? 256 : 512;
+            const height = IS_MOBILE ? 128 : 256;
 
             // Color Texture Canvas
             const colCanvas = document.createElement('canvas');
@@ -979,12 +996,15 @@
             camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 2500);
             camera.position.set(0, 185, 250);
 
-            // 3. Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            // 3. Renderer (Mobile-optimized pixelRatio & shadow settings for smooth FPS)
+            renderer = new THREE.WebGLRenderer({
+                antialias: !IS_MOBILE,
+                powerPreference: 'high-performance'
+            });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 1.25 : 1.75));
+            renderer.shadowMap.enabled = !IS_MOBILE;
+            renderer.shadowMap.type = THREE.PCFShadowMap;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             renderer.toneMappingExposure = 1.05;
             container.appendChild(renderer.domElement);
@@ -997,6 +1017,7 @@
             controls.minDistance = 12;
             controls.maxDistance = 900;
             controls.target.set(0, 5, 0);
+            controls.addEventListener('change', () => { poiDirty = true; });
 
             // 5. Lighting Setup
             setupLighting();
@@ -1022,7 +1043,11 @@
             // Window resize
             window.addEventListener('resize', onWindowResize);
 
-            // Raycasting for direct building click
+            // Raycasting for direct building click (ignore camera drag gestures)
+            renderer.domElement.addEventListener('pointerdown', (e) => {
+                pointerDownPos.x = e.clientX;
+                pointerDownPos.y = e.clientY;
+            });
             renderer.domElement.addEventListener('pointerup', onPointerClick);
 
             // Render loop
@@ -1039,31 +1064,25 @@
             // Sun (Day Light)
             sunLight = new THREE.DirectionalLight(0xfff6e8, 1.15);
             sunLight.position.set(-120, 240, 130);
-            sunLight.castShadow = true;
-            sunLight.shadow.mapSize.width = 4096;
-            sunLight.shadow.mapSize.height = 4096;
-            sunLight.shadow.camera.near = 20;
-            sunLight.shadow.camera.far = 700;
-            const d = 260;
-            sunLight.shadow.camera.left = -d;
-            sunLight.shadow.camera.right = d;
-            sunLight.shadow.camera.top = d;
-            sunLight.shadow.camera.bottom = -d;
-            sunLight.shadow.bias = -0.0004;
+            sunLight.castShadow = !IS_MOBILE;
+            if (!IS_MOBILE) {
+                sunLight.shadow.mapSize.width = 2048;
+                sunLight.shadow.mapSize.height = 2048;
+                sunLight.shadow.camera.near = 20;
+                sunLight.shadow.camera.far = 700;
+                const d = 260;
+                sunLight.shadow.camera.left = -d;
+                sunLight.shadow.camera.right = d;
+                sunLight.shadow.camera.top = d;
+                sunLight.shadow.camera.bottom = -d;
+                sunLight.shadow.bias = -0.0005;
+            }
             scene.add(sunLight);
 
-            // Moon Light (for Night Mode - photo 1 slate blue lighting)
+            // Moon Light (for Night Mode - photo 1 slate blue lighting, no duplicate shadow map pass)
             moonLight = new THREE.DirectionalLight(0x9fb6dc, 0);
             moonLight.position.set(-80, 220, 120);
-            moonLight.castShadow = true;
-            moonLight.shadow.mapSize.width = 2048;
-            moonLight.shadow.mapSize.height = 2048;
-            moonLight.shadow.camera.near = 20;
-            moonLight.shadow.camera.far = 700;
-            moonLight.shadow.camera.left = -d;
-            moonLight.shadow.camera.right = d;
-            moonLight.shadow.camera.top = d;
-            moonLight.shadow.camera.bottom = -d;
+            moonLight.castShadow = false;
             scene.add(moonLight);
         }
 
@@ -1138,21 +1157,22 @@
             const boxMats = (sideMat, capMat = matDarkRoof) => [sideMat, sideMat, capMat, capMat, sideMat, sideMat];
             const cylMats = (sideMat, capMat = matDarkRoof) => [sideMat, capMat, capMat];
 
-            // Helper: Add 3D Apple Park style horizontal louver fins & glowing ground base rim
+            // Helper: Add 3D Apple Park style horizontal louver fins & glowing ground base rim (Shared Unit Geometries)
             const addBoxLouvers = (group, w, h, d, floors = 4, ox = 0, oz = 0, ry = 0) => {
                 const lGrp = new THREE.Group();
                 lGrp.position.set(ox, 0, oz);
                 lGrp.rotation.y = ry;
 
-                const baseRim = new THREE.Mesh(new THREE.BoxGeometry(w + 0.9, 0.35, d + 0.9), matGlowTrim);
+                const baseRim = new THREE.Mesh(UNIT_BOX_GEO, matGlowTrim);
+                baseRim.scale.set(w + 0.9, 0.35, d + 0.9);
                 baseRim.position.y = 0.2;
                 lGrp.add(baseRim);
 
                 for (let f = 1; f <= floors; f++) {
                     const fy = (h / floors) * f - 0.15;
-                    const fin = new THREE.Mesh(new THREE.BoxGeometry(w + 0.65, 0.26, d + 0.65), matGlowTrim);
+                    const fin = new THREE.Mesh(UNIT_BOX_GEO, matGlowTrim);
+                    fin.scale.set(w + 0.65, 0.26, d + 0.65);
                     fin.position.y = fy;
-                    fin.castShadow = true;
                     lGrp.add(fin);
                 }
                 group.add(lGrp);
@@ -1162,15 +1182,16 @@
                 const lGrp = new THREE.Group();
                 lGrp.position.set(ox, 0, oz);
 
-                const baseRim = new THREE.Mesh(new THREE.CylinderGeometry(radius + 0.6, radius + 0.6, 0.35, 36), matGlowTrim);
+                const baseRim = new THREE.Mesh(UNIT_CYL_GEO, matGlowTrim);
+                baseRim.scale.set(radius + 0.6, 0.35, radius + 0.6);
                 baseRim.position.y = 0.2;
                 lGrp.add(baseRim);
 
                 for (let f = 1; f <= floors; f++) {
                     const fy = (h / floors) * f - 0.15;
-                    const fin = new THREE.Mesh(new THREE.CylinderGeometry(radius + 0.45, radius + 0.45, 0.26, 36), matGlowTrim);
+                    const fin = new THREE.Mesh(UNIT_CYL_GEO, matGlowTrim);
+                    fin.scale.set(radius + 0.45, 0.26, radius + 0.45);
                     fin.position.y = fy;
-                    fin.castShadow = true;
                     lGrp.add(fin);
                 }
                 group.add(lGrp);
@@ -1187,11 +1208,12 @@
                     else if (bodyMat === matGrey) appliedMat = boxMats(facGrey3, matGrey);
                 }
 
-                const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), appliedMat);
+                const mesh = new THREE.Mesh(poiId ? new THREE.BoxGeometry(w, h, d) : UNIT_BOX_GEO, appliedMat);
+                if (!poiId) mesh.scale.set(w, h, d);
                 mesh.position.set(ox, h / 2, oz);
                 mesh.rotation.y = ry;
-                mesh.castShadow = true;
-                mesh.receiveShadow = true;
+                mesh.castShadow = !IS_MOBILE;
+                mesh.receiveShadow = !IS_MOBILE;
                 if (poiId) {
                     mesh.userData.poiId = poiId;
                     clickableObjects.push(mesh);
@@ -1203,24 +1225,20 @@
                 }
 
                 if (roofMat) {
-                    const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.55, d + 0.4), roofMat);
+                    const roof = new THREE.Mesh(UNIT_BOX_GEO, roofMat);
+                    roof.scale.set(w + 0.4, 0.55, d + 0.4);
                     roof.position.set(ox, h + 0.28, oz);
                     roof.rotation.y = ry;
-                    roof.castShadow = true;
-                    if (poiId) {
-                        roof.userData.poiId = poiId;
-                        clickableObjects.push(roof);
-                    }
                     parentGrp.add(roof);
                 }
                 return mesh;
             };
 
             const addSubCyl = (parentGrp, ox, oz, r, h, sideFacade, poiId = null, roofMat = matDarkRoof) => {
-                const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 36), cylMats(sideFacade, roofMat));
+                const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, CYL_SEGMENTS), cylMats(sideFacade, roofMat));
                 cyl.position.set(ox, h / 2, oz);
-                cyl.castShadow = true;
-                cyl.receiveShadow = true;
+                cyl.castShadow = !IS_MOBILE;
+                cyl.receiveShadow = !IS_MOBILE;
                 if (poiId) {
                     cyl.userData.poiId = poiId;
                     clickableObjects.push(cyl);
@@ -1231,13 +1249,9 @@
                     addCylinderLouvers(parentGrp, r, h, Math.max(2, Math.round(h / 4)), ox, oz);
                 }
 
-                const cap = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.5, r + 0.5, 0.6, 36), roofMat);
+                const cap = new THREE.Mesh(UNIT_CYL_GEO, roofMat);
+                cap.scale.set(r + 0.5, 0.6, r + 0.5);
                 cap.position.set(ox, h + 0.3, oz);
-                cap.castShadow = true;
-                if (poiId) {
-                    cap.userData.poiId = poiId;
-                    clickableObjects.push(cap);
-                }
                 parentGrp.add(cap);
                 return cyl;
             };
@@ -1336,10 +1350,13 @@
             // Small rear north projection on the connecting bar
             addSubBox(musGrp, -16, -11, 12, 11, 8, matBrick, 'museum', -0.15);
 
-            // Dynamic Firework Flash Light in front of Museum Rotunda
-            fireworkLight = new THREE.PointLight(0xffdf80, 0, 95, 1.4);
-            fireworkLight.position.set(-58, 28, 28);
-            scene.add(fireworkLight);
+            // Dynamic Firework Flash Light in front of Museum Rotunda (Disabled on mobile & hidden in day mode to keep PBR shader fast)
+            if (!IS_MOBILE) {
+                fireworkLight = new THREE.PointLight(0xffdf80, 0, 95, 1.4);
+                fireworkLight.position.set(-58, 28, 28);
+                fireworkLight.visible = false;
+                scene.add(fireworkLight);
+            }
             scene.add(musGrp);
 
             // 第1学舎 (1st Building Courtyard Complex - 第1学舎 食堂 & 1号館 & 3号館C棟)
@@ -1549,32 +1566,30 @@
             // 関西大学 時計塔 (Clock Tower)
             const clockGrp = new THREE.Group();
             clockGrp.position.set(74, 0, 66);
-            const towerBase = new THREE.Mesh(new THREE.BoxGeometry(3.4, 18, 3.4), matWhite);
+            const towerBase = new THREE.Mesh(UNIT_BOX_GEO, matWhite);
+            towerBase.scale.set(3.4, 18, 3.4);
             towerBase.position.y = 9;
-            towerBase.castShadow = true;
+            towerBase.castShadow = !IS_MOBILE;
             towerBase.userData.poiId = 'clock-tower';
             clickableObjects.push(towerBase);
             clockGrp.add(towerBase);
 
             const faceMat = new THREE.MeshBasicMaterial({ color: 0xfff3c4 });
+            const faceGeo = new THREE.CircleGeometry(1.0, 12);
             [-1.75, 1.75].forEach(x => {
-                const face = new THREE.Mesh(new THREE.CircleGeometry(1.0, 16), faceMat);
+                const face = new THREE.Mesh(faceGeo, faceMat);
                 face.position.set(x, 15.5, 0);
                 face.rotation.y = (x > 0 ? 1 : -1) * Math.PI / 2;
                 clockGrp.add(face);
             });
-
-            const beacon = new THREE.PointLight(0xfff1c5, 0, 25);
-            beacon.position.set(0, 19, 0);
-            clockGrp.add(beacon);
-            windowLights.push({ light: beacon, nightIntensity: 1.8 });
             scene.add(clockGrp);
 
             // 関西大学 正門 (Main Gate)
             [-4, 4].forEach(gx => {
-                const pillar = new THREE.Mesh(new THREE.BoxGeometry(2.2, 6, 2.2), matBrick);
+                const pillar = new THREE.Mesh(UNIT_BOX_GEO, matBrick);
+                pillar.scale.set(2.2, 6, 2.2);
                 pillar.position.set(82 + gx, 3, 92);
-                pillar.castShadow = true;
+                pillar.castShadow = !IS_MOBILE;
                 pillar.userData.poiId = 'main-gate';
                 clickableObjects.push(pillar);
                 scene.add(pillar);
@@ -1586,48 +1601,75 @@
             // -------------------------------------------------------------
             const tentPoleMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4, metalness: 0.5 });
             const tentRoofWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 });
+            const tentCounterMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.7 });
             const cyanZoneFillMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.22, depthWrite: false });
             const cyanZoneBorderMat = new THREE.MeshBasicMaterial({ color: 0x0ea5e9 });
+            const tentRoofConeGeo = new THREE.ConeGeometry(1.42, 0.85, 4);
+            const unitPlaneGeo = new THREE.PlaneGeometry(1, 1);
+            const redRingGeo = new THREE.RingGeometry(1.15, 1.65, 18);
+            const redRingMat = new THREE.MeshBasicMaterial({ color: 0xef4444, side: THREE.DoubleSide });
+            const binBodyMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 });
+            const binLidMats = [
+                new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.35 }),
+                new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.35 }),
+                new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.35 })
+            ];
+            const binPadGreenMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.6 });
+            const binPadBlueMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.6 });
 
-            // Helper: Create crisp floating number badge sprite for tents & trash bins (Always visible on top)
+            // Cache materials & sprite textures to avoid duplicate GPU allocations
+            const valanceMatCache = new Map();
+            const getValanceMat = (hex) => {
+                if (!valanceMatCache.has(hex)) {
+                    valanceMatCache.set(hex, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.5 }));
+                }
+                return valanceMatCache.get(hex);
+            };
+
+            const spriteMatCache = new Map();
+            // Helper: Create crisp floating number badge sprite for tents & trash bins (Power-of-Two 128x64 canvas)
             const makeLabelSprite = (text, bgHex = '#ffffff', borderHex = '#0284c7', textHex = '#0f172a', scaleW = 3.6, scaleH = 1.85) => {
-                const c = document.createElement('canvas');
-                c.width = 160;
-                c.height = 84;
-                const ctx = c.getContext('2d');
+                const key = `${text}|${bgHex}|${borderHex}|${textHex}`;
+                let sMat = spriteMatCache.get(key);
+                if (!sMat) {
+                    const c = document.createElement('canvas');
+                    c.width = 128;
+                    c.height = 64;
+                    const ctx = c.getContext('2d');
 
-                // Rounded pill background
-                const r = 18;
-                ctx.fillStyle = bgHex;
-                ctx.strokeStyle = borderHex;
-                ctx.lineWidth = 8;
-                ctx.beginPath();
-                ctx.roundRect(6, 6, 148, 72, r);
-                ctx.fill();
-                ctx.stroke();
+                    const r = 14;
+                    ctx.fillStyle = bgHex;
+                    ctx.strokeStyle = borderHex;
+                    ctx.lineWidth = 6;
+                    ctx.beginPath();
+                    ctx.roundRect(4, 4, 120, 56, r);
+                    ctx.fill();
+                    ctx.stroke();
 
-                // Crisp label text
-                ctx.fillStyle = textHex;
-                ctx.font = '900 42px "Inter", "Noto Sans JP", sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(text, 80, 45);
+                    ctx.fillStyle = textHex;
+                    ctx.font = '900 32px "Inter", "Noto Sans JP", sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(text, 64, 34);
 
-                const tex = new THREE.CanvasTexture(c);
-                tex.needsUpdate = true;
-                const sMat = new THREE.SpriteMaterial({
-                    map: tex,
-                    transparent: true,
-                    depthTest: false,
-                    depthWrite: false
-                });
+                    const tex = new THREE.CanvasTexture(c);
+                    tex.generateMipmaps = false;
+                    tex.minFilter = THREE.LinearFilter;
+                    sMat = new THREE.SpriteMaterial({
+                        map: tex,
+                        transparent: true,
+                        depthTest: false,
+                        depthWrite: false
+                    });
+                    spriteMatCache.set(key, sMat);
+                }
                 const sprite = new THREE.Sprite(sMat);
                 sprite.scale.set(scaleW, scaleH, 1);
                 sprite.renderOrder = 999;
                 return sprite;
             };
 
-            // Helper: Build a single small 3D festival tent with its assigned number & register for Search
+            // Helper: Build a single small 3D festival tent with shared geometries & materials
             const addSmallTent = (parent, x, z, label, valanceHex = 0x38bdf8, badgeBg = '#fffbeb', ry = 0, w = 2.0, d = 2.0, areaName = 'キャンパス内テントエリア') => {
                 const tGrp = new THREE.Group();
                 tGrp.position.set(x, 0, z);
@@ -1635,46 +1677,36 @@
 
                 const tentId = `tent-${label}`;
 
-                // 4 Corner Legs
+                // 4 Corner Legs (Shared UNIT_BOX_GEO)
                 const hw = w * 0.44;
                 const hd = d * 0.44;
-                const legGeo = new THREE.BoxGeometry(0.12, 1.5, 0.12);
                 [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([lx, lz]) => {
-                    const leg = new THREE.Mesh(legGeo, tentPoleMat);
+                    const leg = new THREE.Mesh(UNIT_BOX_GEO, tentPoleMat);
+                    leg.scale.set(0.12, 1.5, 0.12);
                     leg.position.set(lx, 0.75, lz);
                     tGrp.add(leg);
                 });
 
                 // Counter table inside booth
-                const counter = new THREE.Mesh(
-                    new THREE.BoxGeometry(w * 0.82, 0.7, d * 0.55),
-                    new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.7 })
-                );
+                const counter = new THREE.Mesh(UNIT_BOX_GEO, tentCounterMat);
+                counter.scale.set(w * 0.82, 0.7, d * 0.55);
                 counter.position.set(0, 0.35, 0);
-                counter.userData.poiId = tentId;
-                clickableObjects.push(counter);
                 tGrp.add(counter);
 
                 // Colored Valance Trim (Roof Eaves)
-                const valance = new THREE.Mesh(
-                    new THREE.BoxGeometry(w, 0.28, d),
-                    new THREE.MeshStandardMaterial({ color: valanceHex, roughness: 0.5 })
-                );
+                const valance = new THREE.Mesh(UNIT_BOX_GEO, getValanceMat(valanceHex));
+                valance.scale.set(w, 0.28, d);
                 valance.position.y = 1.55;
-                valance.castShadow = true;
                 valance.userData.poiId = tentId;
                 clickableObjects.push(valance);
                 tGrp.add(valance);
 
-                // Pyramidal White Tent Canopy Roof
-                const pyrRadius = Math.max(w, d) * 0.71;
-                const roof = new THREE.Mesh(
-                    new THREE.ConeGeometry(pyrRadius, 0.85, 4),
-                    tentRoofWhiteMat
-                );
+                // Pyramidal White Tent Canopy Roof (Shared ConeGeometry)
+                const roof = new THREE.Mesh(tentRoofConeGeo, tentRoofWhiteMat);
+                const roofScale = Math.max(w, d) / 2.0;
+                roof.scale.set(roofScale, 1, roofScale);
                 roof.rotation.y = Math.PI / 4;
                 roof.position.y = 2.1;
-                roof.castShadow = true;
                 roof.userData.poiId = tentId;
                 clickableObjects.push(roof);
                 tGrp.add(roof);
@@ -1689,12 +1721,6 @@
 
                 parent.add(tGrp);
 
-                // Compute world coordinates for Search & Camera Focus
-                parent.updateMatrixWorld(true);
-                tGrp.updateMatrixWorld(true);
-                const wp = new THREE.Vector3();
-                tGrp.getWorldPosition(wp);
-
                 const isSpecial = (label === '本部' || label === '両替');
                 TENT_AND_BIN_DATA.push({
                     id: tentId,
@@ -1704,8 +1730,8 @@
                     category: `テント番号: ${label} ・ ${areaName}`,
                     color: hexStr,
                     icon: 'tent',
-                    pos: [wp.x, 3.2, wp.z],
-                    camPos: [wp.x, 24, wp.z + 25],
+                    pos: [x, 3.2, z],
+                    camPos: [x, 24, z + 25],
                     desc: `【${areaName}】水色四角エリア内に設置された小型テント「${label}」です。検索および3Dマップ上から直接位置を確認できます。`,
                     hours: 'イベント開催時間'
                 });
@@ -1713,31 +1739,36 @@
                 return tGrp;
             };
 
-            // Helper: Draw Light-Blue Rectangular Zone Frame (水色四角) on the ground
+            // Helper: Draw Light-Blue Rectangular Zone Frame (水色四角) on the ground (Shared geometries)
             const addCyanZoneBox = (parent, cx, cz, w, d, ry = 0) => {
                 const zGrp = new THREE.Group();
                 zGrp.position.set(cx, 0.18, cz);
                 zGrp.rotation.y = ry;
 
-                const pad = new THREE.Mesh(new THREE.PlaneGeometry(w, d), cyanZoneFillMat);
+                const pad = new THREE.Mesh(unitPlaneGeo, cyanZoneFillMat);
+                pad.scale.set(w, d, 1);
                 pad.rotation.x = -Math.PI / 2;
                 zGrp.add(pad);
 
                 const bThick = 0.35;
-                const topB = new THREE.Mesh(new THREE.BoxGeometry(w + bThick, 0.12, bThick), cyanZoneBorderMat);
+                const topB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
+                topB.scale.set(w + bThick, 0.12, bThick);
                 topB.position.set(0, 0.06, -d / 2);
-                const botB = new THREE.Mesh(new THREE.BoxGeometry(w + bThick, 0.12, bThick), cyanZoneBorderMat);
+                const botB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
+                botB.scale.set(w + bThick, 0.12, bThick);
                 botB.position.set(0, 0.06, d / 2);
-                const leftB = new THREE.Mesh(new THREE.BoxGeometry(bThick, 0.12, d + bThick), cyanZoneBorderMat);
+                const leftB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
+                leftB.scale.set(bThick, 0.12, d + bThick);
                 leftB.position.set(-w / 2, 0.06, 0);
-                const rightB = new THREE.Mesh(new THREE.BoxGeometry(bThick, 0.12, d + bThick), cyanZoneBorderMat);
+                const rightB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
+                rightB.scale.set(bThick, 0.12, d + bThick);
                 rightB.position.set(w / 2, 0.06, 0);
                 zGrp.add(topB, botB, leftB, rightB);
 
                 parent.add(zGrp);
             };
 
-            // Helper: Build a Small Trash Bin / Recycling Station at Red-Marked Spots (赤い印の小さなゴミ箱)
+            // Helper: Build a Small Trash Bin / Recycling Station at Red-Marked Spots (Shared geometries & materials)
             const addRedMarkedTrashBin = (parent, x, z, label = 'ゴミ箱', stationType = 'blue', ry = 0, areaName = 'キャンパス内') => {
                 const binGrp = new THREE.Group();
                 binGrp.position.set(x, 0, z);
@@ -1746,47 +1777,29 @@
                 const binId = `trash-${trashBinCounter++}`;
 
                 // Base Station Pad (Green for ゴミ①〜⑤, Blue for ゴミステーション)
-                const padColor = stationType === 'green' ? 0x22c55e : 0x0284c7;
-                const basePad = new THREE.Mesh(
-                    new THREE.BoxGeometry(3.2, 0.18, 1.8),
-                    new THREE.MeshStandardMaterial({ color: padColor, roughness: 0.6 })
-                );
+                const basePad = new THREE.Mesh(UNIT_BOX_GEO, stationType === 'green' ? binPadGreenMat : binPadBlueMat);
+                basePad.scale.set(3.2, 0.18, 1.8);
                 basePad.position.y = 0.09;
                 basePad.userData.poiId = binId;
                 clickableObjects.push(basePad);
                 binGrp.add(basePad);
 
-                // Glowing Red Mark Ring / Star Indicator underneath (赤い印)
-                const redRing = new THREE.Mesh(
-                    new THREE.RingGeometry(1.15, 1.65, 24),
-                    new THREE.MeshBasicMaterial({ color: 0xef4444, side: THREE.DoubleSide })
-                );
+                // Glowing Red Mark Ring Indicator underneath (赤い印)
+                const redRing = new THREE.Mesh(redRingGeo, redRingMat);
                 redRing.rotation.x = -Math.PI / 2;
                 redRing.position.y = 0.2;
                 binGrp.add(redRing);
 
                 // 3 Small Segmented Trash / Recycling Bins (可燃=赤, 不燃=青, 資源/段ボール=緑)
-                const binColors = [0xef4444, 0x3b82f6, 0x10b981];
                 [-0.9, 0, 0.9].forEach((bx, idx) => {
-                    const bBody = new THREE.Mesh(
-                        new THREE.BoxGeometry(0.72, 1.05, 0.72),
-                        new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 })
-                    );
+                    const bBody = new THREE.Mesh(UNIT_BOX_GEO, binBodyMat);
+                    bBody.scale.set(0.72, 1.05, 0.72);
                     bBody.position.set(bx, 0.62, 0);
-                    bBody.castShadow = true;
-                    bBody.userData.poiId = binId;
-                    clickableObjects.push(bBody);
                     binGrp.add(bBody);
 
-                    // Colored recycling hood lid
-                    const bLid = new THREE.Mesh(
-                        new THREE.BoxGeometry(0.78, 0.32, 0.78),
-                        new THREE.MeshStandardMaterial({ color: binColors[idx], roughness: 0.35 })
-                    );
+                    const bLid = new THREE.Mesh(UNIT_BOX_GEO, binLidMats[idx]);
+                    bLid.scale.set(0.78, 0.32, 0.78);
                     bLid.position.set(bx, 1.25, 0);
-                    bLid.castShadow = true;
-                    bLid.userData.poiId = binId;
-                    clickableObjects.push(bLid);
                     binGrp.add(bLid);
                 });
 
@@ -1799,11 +1812,6 @@
 
                 parent.add(binGrp);
 
-                parent.updateMatrixWorld(true);
-                binGrp.updateMatrixWorld(true);
-                const wp = new THREE.Vector3();
-                binGrp.getWorldPosition(wp);
-
                 TENT_AND_BIN_DATA.push({
                     id: binId,
                     tentNo: label,
@@ -1812,8 +1820,8 @@
                     category: `ゴミ箱・分別ステーション ・ ${areaName}`,
                     color: '#ef4444',
                     icon: 'trash-2',
-                    pos: [wp.x, 2.8, wp.z],
-                    camPos: [wp.x, 24, wp.z + 25],
+                    pos: [x, 2.8, z],
+                    camPos: [x, 24, z + 25],
                     desc: `【${areaName}】赤い印の位置に設置された分別ゴミ箱（可燃・不燃・資源）です。`,
                     hours: '常時設置'
                 });
@@ -2014,21 +2022,18 @@
                 [-68, -106], [16, -106],
                 [-68, -164], [16, -164]
             ];
+            const floodPoleGeo = new THREE.CylinderGeometry(0.5, 0.8, 28, 6);
+            const floodLampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
             floodPositions.forEach(fp => {
                 const fGrp = new THREE.Group();
                 fGrp.position.set(fp[0], 0, fp[1]);
-                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 28, 8), matGrey);
+                const pole = new THREE.Mesh(floodPoleGeo, matGrey);
                 pole.position.y = 14;
-                pole.castShadow = true;
                 fGrp.add(pole);
-                const lampHead = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+                const lampHead = new THREE.Mesh(UNIT_BOX_GEO, floodLampMat);
+                lampHead.scale.set(5, 3, 1);
                 lampHead.position.set(0, 27, 0);
                 fGrp.add(lampHead);
-
-                const flSpot = new THREE.PointLight(0xfffaed, 0, 70, 1.2);
-                flSpot.position.set(0, 27, 0);
-                fGrp.add(flSpot);
-                windowLights.push({ light: flSpot, nightIntensity: 1.8 });
                 scene.add(fGrp);
             });
 
@@ -2042,13 +2047,13 @@
             );
             bbMesh.rotation.x = -Math.PI / 2;
             bbMesh.position.set(-105, 0.16, -150);
-            bbMesh.receiveShadow = true;
+            bbMesh.receiveShadow = !IS_MOBILE;
             bbMesh.userData.poiId = 'ground-north';
             clickableObjects.push(bbMesh);
             scene.add(bbMesh);
 
             const backnet = new THREE.Mesh(
-                new THREE.CylinderGeometry(22, 22, 7, 16, 1, true, -Math.PI * 0.75, Math.PI * 0.5),
+                new THREE.CylinderGeometry(22, 22, 7, 12, 1, true, -Math.PI * 0.75, Math.PI * 0.5),
                 new THREE.MeshBasicMaterial({ color: 0x475569, wireframe: true, side: THREE.DoubleSide })
             );
             backnet.position.set(-105, 3.5, -135);
@@ -2062,54 +2067,61 @@
             roadGrp.position.set(0, 2, -180);
             roadGrp.rotation.y = -Math.PI / 16;
 
-            const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(340, 2.5, 20), matExpressway);
-            roadSlab.receiveShadow = true;
+            const roadSlab = new THREE.Mesh(UNIT_BOX_GEO, matExpressway);
+            roadSlab.scale.set(340, 2.5, 20);
+            roadSlab.receiveShadow = !IS_MOBILE;
             roadSlab.userData.poiId = 'meishin';
             clickableObjects.push(roadSlab);
             roadGrp.add(roadSlab);
 
             [-9.8, 9.8].forEach(wz => {
-                const wall = new THREE.Mesh(new THREE.BoxGeometry(340, 1.8, 0.6), matGrey);
+                const wall = new THREE.Mesh(UNIT_BOX_GEO, matGrey);
+                wall.scale.set(340, 1.8, 0.6);
                 wall.position.set(0, 1.8, wz);
-                wall.castShadow = true;
                 roadGrp.add(wall);
             });
 
-            const divider = new THREE.Mesh(new THREE.BoxGeometry(340, 1.2, 0.8), matGrey);
+            const divider = new THREE.Mesh(UNIT_BOX_GEO, matGrey);
+            divider.scale.set(340, 1.2, 0.8);
             divider.position.set(0, 1.6, 0);
             roadGrp.add(divider);
 
             const tunnelGrp = new THREE.Group();
             tunnelGrp.position.set(125, 0, 0);
-            const tunnelArch = new THREE.Mesh(new THREE.BoxGeometry(16, 12, 24), matGrey);
+            const tunnelArch = new THREE.Mesh(UNIT_BOX_GEO, matGrey);
+            tunnelArch.scale.set(16, 12, 24);
             tunnelArch.position.y = 5;
             tunnelGrp.add(tunnelArch);
-            const tunnelDark = new THREE.Mesh(new THREE.BoxGeometry(16.2, 7, 18), new THREE.MeshBasicMaterial({ color: 0x050505 }));
+            const tunnelDark = new THREE.Mesh(UNIT_BOX_GEO, new THREE.MeshBasicMaterial({ color: 0x050505 }));
+            tunnelDark.scale.set(16.2, 7, 18);
             tunnelDark.position.y = 3.5;
             tunnelGrp.add(tunnelDark);
             roadGrp.add(tunnelGrp);
             scene.add(roadGrp);
 
-            // Expressway Traffic (Animated Cars)
+            // Expressway Traffic (Animated Cars with lightweight glowing lamp meshes instead of expensive PointLights)
             const carColors = [0xffffff, 0xef4444, 0x3b82f6, 0x10b981, 0x374151, 0xeab308];
+            const headLampMat = new THREE.MeshBasicMaterial({ color: 0xfff8d6 });
+            const tailLampMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
             for (let i = 0; i < 9; i++) {
                 const isEastbound = i % 2 === 0;
                 const carCol = carColors[i % carColors.length];
                 const carMesh = new THREE.Group();
 
-                const cBody = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1.6, 2.2), new THREE.MeshStandardMaterial({ color: carCol, roughness: 0.3 }));
+                const cBody = new THREE.Mesh(UNIT_BOX_GEO, new THREE.MeshStandardMaterial({ color: carCol, roughness: 0.3 }));
+                cBody.scale.set(4.5, 1.6, 2.2);
                 cBody.position.y = 0.8;
-                cBody.castShadow = true;
                 carMesh.add(cBody);
 
-                const headLight = new THREE.PointLight(0xfffaed, 0, 15);
-                headLight.position.set(2.5, 0.8, 0);
-                carMesh.add(headLight);
-                const tailLight = new THREE.PointLight(0xff1111, 0, 8);
-                tailLight.position.set(-2.5, 0.8, 0);
-                carMesh.add(tailLight);
-                windowLights.push({ light: headLight, nightIntensity: 0.8 });
-                windowLights.push({ light: tailLight, nightIntensity: 0.5 });
+                const hLamp = new THREE.Mesh(UNIT_BOX_GEO, headLampMat);
+                hLamp.scale.set(0.25, 0.45, 1.8);
+                hLamp.position.set(2.26, 0.75, 0);
+                carMesh.add(hLamp);
+
+                const tLamp = new THREE.Mesh(UNIT_BOX_GEO, tailLampMat);
+                tLamp.scale.set(0.25, 0.45, 1.8);
+                tLamp.position.set(-2.26, 0.75, 0);
+                carMesh.add(tLamp);
 
                 const laneZ = isEastbound ? 4.5 : -4.5;
                 const startX = -150 + Math.random() * 260;
@@ -2122,30 +2134,52 @@
             }
 
             // -------------------------------------------------------------
-            // 19. 周辺街並み (Kandai-dori Town Houses & Street Blocks)
+            // 19. 周辺街並み (InstancedMesh Town Houses - 2 draw calls instead of 144)
             // -------------------------------------------------------------
             const townMat = registerMat(new THREE.MeshStandardMaterial(), 0xd0d5dc, 0x242f44, 0.8, 0.7);
             const townRoofMat = registerMat(new THREE.MeshStandardMaterial(), 0x687280, 0x161e2e, 0.8, 0.7);
-            const createTownBlock = (cx, cz, count, rx, rz) => {
+            const townTransforms = [];
+            const collectTownBlock = (cx, cz, count, rx, rz) => {
                 for (let i = 0; i < count; i++) {
-                    const bx = cx + (Math.random() - 0.5) * rx;
-                    const bz = cz + (Math.random() - 0.5) * rz;
-                    const bw = 7 + Math.random() * 6;
-                    const bd = 7 + Math.random() * 6;
-                    const bh = 5 + Math.random() * 8;
-                    createBoxBuilding(bx, bz, bw, bh, bd, Math.random() * 0.3, townMat, townRoofMat, 0.2);
+                    townTransforms.push({
+                        bx: cx + (Math.random() - 0.5) * rx,
+                        bz: cz + (Math.random() - 0.5) * rz,
+                        bw: 7 + Math.random() * 6,
+                        bd: 7 + Math.random() * 6,
+                        bh: 5 + Math.random() * 8,
+                        ry: Math.random() * 0.3
+                    });
                 }
             };
-            createTownBlock(20, 125, 18, 120, 35);
-            createTownBlock(-60, 130, 12, 60, 30);
-            createTownBlock(110, 120, 12, 50, 30);
-            createTownBlock(160, -20, 16, 50, 140);
-            createTownBlock(-150, -100, 14, 50, 80);
+            collectTownBlock(20, 125, 18, 120, 35);
+            collectTownBlock(-60, 130, 12, 60, 30);
+            collectTownBlock(110, 120, 12, 50, 30);
+            collectTownBlock(160, -20, 16, 50, 140);
+            collectTownBlock(-150, -100, 14, 50, 80);
+
+            const townBodyInst = new THREE.InstancedMesh(UNIT_BOX_GEO, townMat, townTransforms.length);
+            const townRoofInst = new THREE.InstancedMesh(UNIT_BOX_GEO, townRoofMat, townTransforms.length);
+            const dummy = new THREE.Object3D();
+            townTransforms.forEach((t, idx) => {
+                dummy.position.set(t.bx, t.bh / 2, t.bz);
+                dummy.rotation.set(0, t.ry, 0);
+                dummy.scale.set(t.bw, t.bh, t.bd);
+                dummy.updateMatrix();
+                townBodyInst.setMatrixAt(idx, dummy.matrix);
+
+                dummy.position.set(t.bx, t.bh + 0.28, t.bz);
+                dummy.scale.set(t.bw + 0.4, 0.55, t.bd + 0.4);
+                dummy.updateMatrix();
+                townRoofInst.setMatrixAt(idx, dummy.matrix);
+            });
+            townBodyInst.instanceMatrix.needsUpdate = true;
+            townRoofInst.instanceMatrix.needsUpdate = true;
+            scene.add(townBodyInst, townRoofInst);
 
             // -------------------------------------------------------------
             // 20. 樹木・植栽 (InstancedMesh Campus Trees - 180+ Trees)
             // -------------------------------------------------------------
-            const treeGeo = new THREE.DodecahedronGeometry(1.6, 1);
+            const treeGeo = new THREE.DodecahedronGeometry(1.6, IS_MOBILE ? 0 : 1);
             const matTreeDay = new THREE.MeshStandardMaterial({ color: 0x3d7031, roughness: 0.9, flatShading: true });
             const treeMat = registerMat(matTreeDay, 0x3d7031, 0x24422b, 0.9, 0.8);
 
@@ -2169,17 +2203,25 @@
             addTreesInArea(-30, -92, 50, 15, 20); // Between East Gym & Track
 
             const treeInstanced = new THREE.InstancedMesh(treeGeo, treeMat, treePositions.length);
-            treeInstanced.castShadow = true;
-            const dummy = new THREE.Object3D();
+            treeInstanced.castShadow = !IS_MOBILE;
             treePositions.forEach((pos, idx) => {
                 dummy.position.set(pos[0], pos[2] * 2.2, pos[1]);
                 dummy.scale.set(pos[2] * 1.5, pos[2] * 1.8, pos[2] * 1.5);
-                dummy.rotation.y = Math.random() * Math.PI;
+                dummy.rotation.set(0, Math.random() * Math.PI, 0);
                 dummy.updateMatrix();
                 treeInstanced.setMatrixAt(idx, dummy.matrix);
             });
             treeInstanced.instanceMatrix.needsUpdate = true;
             scene.add(treeInstanced);
+
+            // Precompute and freeze world matrices on all static campus meshes for huge CPU savings
+            scene.updateMatrixWorld(true);
+            const carSet = new Set(cars.map(c => c.mesh));
+            scene.traverse(obj => {
+                if (obj !== scene && obj !== roadGrp && obj !== fireworkLight && !carSet.has(obj) && !carSet.has(obj.parent)) {
+                    obj.matrixAutoUpdate = false;
+                }
+            });
         }
 
         // ==========================================
@@ -2222,35 +2264,41 @@
 
         const tempV = new THREE.Vector3();
         function updatePoiPositions() {
+            const poiContainer = document.getElementById('poi-container');
             if (!showLabels) {
-                document.getElementById('poi-container').style.display = 'none';
+                if (poiContainer.style.display !== 'none') poiContainer.style.display = 'none';
                 return;
             }
-            document.getElementById('poi-container').style.display = 'block';
+            if (poiContainer.style.display !== 'block') poiContainer.style.display = 'block';
 
             const halfW = window.innerWidth / 2;
             const halfH = window.innerHeight / 2;
 
-            poiElements.forEach(item => {
+            for (let i = 0; i < poiElements.length; i++) {
+                const item = poiElements[i];
                 tempV.copy(item.worldPos);
                 tempV.project(camera);
 
                 if (tempV.z > 1) {
-                    item.element.style.display = 'none';
-                    return;
+                    if (item.visible !== false) {
+                        item.element.style.display = 'none';
+                        item.visible = false;
+                    }
+                    continue;
                 }
 
                 const x = (tempV.x * halfW) + halfW;
                 const y = -(tempV.y * halfH) + halfH;
 
-                item.element.style.display = 'block';
-                item.element.style.left = `${x}px`;
-                item.element.style.top = `${y}px`;
+                if (item.visible !== true) {
+                    item.element.style.display = 'block';
+                    item.visible = true;
+                }
 
                 const dist = camera.position.distanceTo(item.worldPos);
                 const scale = Math.max(0.65, Math.min(1.08, 140 / dist));
-                item.element.style.transform = `translate(-50%, -100%) scale(${scale})`;
-            });
+                item.element.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -100%) scale(${scale.toFixed(2)})`;
+            }
         }
 
         // ==========================================
@@ -2334,16 +2382,17 @@
             }, 300);
         }
 
-        // Click Raycasting on 3D Buildings
+        // Click Raycasting on 3D Buildings (Skip when user was dragging the camera)
         function onPointerClick(e) {
             // Disable building tap explanation when facility navigation is hidden
             if (!showLabels) return;
+            if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) > 6) return;
 
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(clickableObjects, true);
+            const intersects = raycaster.intersectObjects(clickableObjects, false);
 
             if (intersects.length > 0) {
                 const targetObj = intersects[0].object;
@@ -2433,7 +2482,7 @@
             fw.age = 0;
 
             const boosted = fw.boosted;
-            const count = boosted ? 250 : 88;
+            const count = boosted ? (IS_MOBILE ? 130 : 230) : (IS_MOBILE ? 52 : 84);
             const geo = new THREE.BufferGeometry();
             const positions = new Float32Array(count * 3);
             const colors = new Float32Array(count * 3);
@@ -2452,16 +2501,16 @@
                 let shellSpeed;
                 if (boosted) {
                     // Triple-shell super chrysanthemum + outer ring
-                    if (i < 55) {
+                    if (i < count * 0.22) {
                         shellSpeed = 6.0 + (Math.random() - 0.5) * 2.0;
-                    } else if (i < 165) {
+                    } else if (i < count * 0.66) {
                         shellSpeed = 12.8 + (Math.random() - 0.5) * 2.4;
                     } else {
                         shellSpeed = 18.2 + (Math.random() - 0.5) * 2.8;
                     }
                 } else {
                     // Dual-shell peony firework (inner core + outer crown)
-                    shellSpeed = (i < 28 ? 5.2 : 10.5) + (Math.random() - 0.5) * 1.8;
+                    shellSpeed = (i < count * 0.32 ? 5.2 : 10.5) + (Math.random() - 0.5) * 1.8;
                 }
 
                 velocities.push({
@@ -2480,7 +2529,7 @@
             geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
             const mat = new THREE.PointsMaterial({
-                size: boosted ? 2.35 : 1.75,
+                size: boosted ? (IS_MOBILE ? 2.8 : 2.35) : (IS_MOBILE ? 2.1 : 1.75),
                 map: sparkTexture,
                 vertexColors: true,
                 transparent: true,
@@ -2495,6 +2544,7 @@
 
             // Flash museum front light with firework color
             if (fireworkLight && isNight) {
+                fireworkLight.visible = true;
                 fireworkLight.color.setHex(fw.palette[0]);
                 fireworkLight.position.set(fw.x, fw.y, fw.z);
                 fireworkLight.intensity = boosted ? 5.2 : 2.4;
@@ -2506,8 +2556,8 @@
             if (!isNight) return;
 
             fireworkTimer += dt;
-            const interval = isFireworkBoost ? 0.16 : 0.68;
-            const maxConcurrent = isFireworkBoost ? 16 : 4;
+            const interval = isFireworkBoost ? (IS_MOBILE ? 0.22 : 0.16) : (IS_MOBILE ? 0.8 : 0.68);
+            const maxConcurrent = isFireworkBoost ? (IS_MOBILE ? 10 : 16) : (IS_MOBILE ? 3 : 4);
 
             if (fireworkTimer > interval) {
                 fireworkTimer = 0;
@@ -2522,6 +2572,7 @@
             // Decay flash light smoothly
             if (fireworkLight && fireworkLight.intensity > 0.1) {
                 fireworkLight.intensity *= Math.pow(0.18, dt);
+                if (fireworkLight.intensity <= 0.1) fireworkLight.visible = false;
             }
 
             for (let i = fireworks.length - 1; i >= 0; i--) {
@@ -2792,6 +2843,7 @@
             // Facility Navigation visibility toggle (with ON/OFF badge & detail card suppression)
             document.getElementById('labels-btn').addEventListener('click', () => {
                 showLabels = !showLabels;
+                poiDirty = true;
                 const btn = document.getElementById('labels-btn');
                 const statusBadge = document.getElementById('labels-status');
 
@@ -2883,11 +2935,15 @@
                     new TWEEN.Tween(camera)
                         .to({ fov: clamped }, 320)
                         .easing(TWEEN.Easing.Quadratic.Out)
-                        .onUpdate(() => camera.updateProjectionMatrix())
+                        .onUpdate(() => {
+                            camera.updateProjectionMatrix();
+                            poiDirty = true;
+                        })
                         .start();
                 } else {
                     camera.fov = clamped;
                     camera.updateProjectionMatrix();
+                    poiDirty = true;
                 }
             };
 
@@ -3100,12 +3156,14 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            poiDirty = true;
         }
 
         // ==========================================
         // 11. Animation Loop
         // ==========================================
         const clock = new THREE.Clock();
+        let compassArrowEl = null;
 
         function animate() {
             requestAnimationFrame(animate);
@@ -3119,27 +3177,29 @@
             controls.update();
 
             // 3. Expressway Cars Traffic Animation
-            cars.forEach(car => {
+            for (let i = 0; i < cars.length; i++) {
+                const car = cars[i];
                 car.mesh.position.x += car.speed;
                 if (car.isEastbound && car.mesh.position.x > 145) {
                     car.mesh.position.x = -160;
                 } else if (!car.isEastbound && car.mesh.position.x < -160) {
                     car.mesh.position.x = 145;
                 }
-            });
+            }
 
             // 3.5 Update Museum Fireworks in Dark Mode
             updateMuseumFireworks(dt);
 
-            // 4. Update Compass needle rotation based on camera angle
-            const compassArrow = document.getElementById('compass-arrow');
-            if (compassArrow) {
-                const angle = controls.getAzimuthalAngle();
-                compassArrow.style.transform = `rotate(${angle}rad)`;
+            // 4 & 5. Update Compass & POI Screen Positions only when camera or visibility changed
+            if (poiDirty) {
+                poiDirty = false;
+                if (!compassArrowEl) compassArrowEl = document.getElementById('compass-arrow');
+                if (compassArrowEl) {
+                    const angle = controls.getAzimuthalAngle();
+                    compassArrowEl.style.transform = `rotate(${angle.toFixed(3)}rad)`;
+                }
+                updatePoiPositions();
             }
-
-            // 5. Update POI Screen Positions
-            updatePoiPositions();
 
             // 6. Render 3D Scene
             renderer.render(scene, camera);
