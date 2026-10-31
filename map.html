@@ -583,8 +583,14 @@
         let ambientLight, sunLight, moonLight;
         let cityGround, campusGround;
         let dayMaterials = [], nightMaterials = [];
+        let windowMaterials = []; // Apple Park style glowing window materials
+        let glowTrimMaterials = []; // Base/louver glowing white trims
         let windowLights = [];
         let cars = []; // Expressway traffic animation
+        let fireworks = []; // Museum front fireworks in dark mode
+        let fireworkLight = null;
+        let fireworkTimer = 0;
+        let sparkTexture = null;
         let poiElements = [];
         const clickableObjects = [];
         const raycaster = new THREE.Raycaster();
@@ -770,6 +776,156 @@
             return new THREE.CanvasTexture(canvas);
         }
 
+        // 3.5 Apple Park Style Glowing Ribbon Window & Louver Textures
+        function createAppleParkWindowTextures(wallColorHex, floors = 4, repeatX = 4, style = 'ribbon') {
+            const width = 512;
+            const height = 256;
+
+            // Color Texture Canvas
+            const colCanvas = document.createElement('canvas');
+            colCanvas.width = width;
+            colCanvas.height = height;
+            const cCtx = colCanvas.getContext('2d');
+
+            // Emissive Texture Canvas (Controls glowing window bands)
+            const emiCanvas = document.createElement('canvas');
+            emiCanvas.width = width;
+            emiCanvas.height = height;
+            const eCtx = emiCanvas.getContext('2d');
+
+            // Fill base wall
+            const hexStr = '#' + new THREE.Color(wallColorHex).getHexString();
+            cCtx.fillStyle = hexStr;
+            cCtx.fillRect(0, 0, width, height);
+
+            eCtx.fillStyle = '#000000';
+            eCtx.fillRect(0, 0, width, height);
+
+            const floorH = height / floors;
+
+            for (let f = 0; f < floors; f++) {
+                const yTop = f * floorH;
+                // Window band dimensions (Balanced wall spandrel + Apple Park glowing ribbon glass)
+                const winMarginTop = style === 'pavilion' ? floorH * 0.18 : floorH * 0.34;
+                const winMarginBottom = style === 'pavilion' ? floorH * 0.14 : floorH * 0.20;
+                const winY = yTop + winMarginTop;
+                const winH = floorH - winMarginTop - winMarginBottom;
+
+                // Dark architectural shadow line right above window
+                cCtx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+                cCtx.fillRect(0, winY - 3, width, 3);
+
+                // Warm glowing interior gradient (Apple Park creamy champagne light)
+                const gradCol = cCtx.createLinearGradient(0, winY, 0, winY + winH);
+                gradCol.addColorStop(0, '#fffef5');
+                gradCol.addColorStop(0.45, '#ffebb3');
+                gradCol.addColorStop(1, '#eab85c');
+                cCtx.fillStyle = gradCol;
+                cCtx.fillRect(0, winY, width, winH);
+
+                const gradEmi = eCtx.createLinearGradient(0, winY, 0, winY + winH);
+                gradEmi.addColorStop(0, '#ffffff');
+                gradEmi.addColorStop(0.5, '#ffe699');
+                gradEmi.addColorStop(1, '#d4a348');
+                eCtx.fillStyle = gradEmi;
+                eCtx.fillRect(0, winY, width, winH);
+
+                // Subtle room light variation along the ribbon while keeping Apple Park continuity
+                const segments = style === 'pavilion' ? 10 : 16;
+                const segW = width / segments;
+                for (let s = 0; s < segments; s++) {
+                    const seed = Math.sin((f + 1) * 19.7 + (s + 1) * 31.3) * 0.5 + 0.5;
+                    if (seed < 0.18 && style !== 'pavilion') {
+                        cCtx.fillStyle = 'rgba(30, 42, 62, 0.45)';
+                        cCtx.fillRect(s * segW, winY, segW, winH);
+                        eCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                        eCtx.fillRect(s * segW, winY, segW, winH);
+                    } else if (seed > 0.72) {
+                        eCtx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                        eCtx.fillRect(s * segW, winY, segW, winH);
+                    }
+
+                    // Crisp vertical mullions (Apple Park glass curtain wall dividers)
+                    const mullionW = style === 'pavilion' ? 2.5 : 4.5;
+                    cCtx.fillStyle = style === 'pavilion' ? 'rgba(180, 195, 210, 0.75)' : hexStr;
+                    cCtx.fillRect(s * segW, winY, mullionW, winH);
+                    eCtx.fillStyle = '#000000';
+                    eCtx.fillRect(s * segW, winY, mullionW - 0.5, winH);
+                }
+
+                // White horizontal louver canopy strip (Signature Apple Park ring look)
+                const louverH = Math.max(3, floorH * 0.09);
+                cCtx.fillStyle = '#f1f5f9';
+                cCtx.fillRect(0, winY - louverH, width, louverH);
+                eCtx.fillStyle = '#8a7f68';
+                eCtx.fillRect(0, winY - louverH * 0.5, width, louverH * 0.5);
+            }
+
+            const colorTex = new THREE.CanvasTexture(colCanvas);
+            colorTex.wrapS = THREE.RepeatWrapping;
+            colorTex.wrapT = THREE.ClampToEdgeWrapping;
+            colorTex.repeat.set(repeatX, 1);
+
+            const emissiveTex = new THREE.CanvasTexture(emiCanvas);
+            emissiveTex.wrapS = THREE.RepeatWrapping;
+            emissiveTex.wrapT = THREE.ClampToEdgeWrapping;
+            emissiveTex.repeat.set(repeatX, 1);
+
+            return { colorTex, emissiveTex };
+        }
+
+        // Create a building facade material with Apple Park glowing windows
+        function createFacadeMat(dayColor, nightColor, floors = 4, repeatX = 3, style = 'ribbon') {
+            const { colorTex, emissiveTex } = createAppleParkWindowTextures(dayColor, floors, repeatX, style);
+            const mat = new THREE.MeshStandardMaterial({
+                map: colorTex,
+                emissiveMap: emissiveTex,
+                emissive: new THREE.Color(0xffeeb5),
+                emissiveIntensity: 0.72, // Warmly lit even in day mode, intense in dark mode
+                roughness: 0.45,
+                metalness: 0.15
+            });
+            mat.userData = {
+                dayColor: 0xffffff, // Keep texture true in day
+                nightColor: 0x9fb4d4, // Cool slate tint on non-emissive walls at night
+                dayRough: 0.45,
+                nightRough: 0.35,
+                dayEmissive: 0.72,
+                nightEmissive: 1.55
+            };
+            windowMaterials.push(mat);
+            return mat;
+        }
+
+        // Create glowing white louver/base trim material (like Apple Park ring fins & ground glow)
+        function createGlowTrimMat() {
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0xf8fafc,
+                emissive: new THREE.Color(0xfff4d6),
+                emissiveIntensity: 0.35,
+                roughness: 0.3,
+                metalness: 0.1
+            });
+            glowTrimMaterials.push(mat);
+            return mat;
+        }
+
+        // 3.6 Soft Radial Glow Particle Texture for Fireworks
+        function createSparkTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            grad.addColorStop(0.25, 'rgba(255, 250, 220, 0.9)');
+            grad.addColorStop(0.6, 'rgba(255, 220, 150, 0.35)');
+            grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+
         // ==========================================
         // 4. Initialization
         // ==========================================
@@ -923,7 +1079,7 @@
             addGrass(10, 48, 55, 25, false);       // 図書館南側緑地
             addGrass(-10, -55, 45, 25, true);      // シンフォニーホール北側
 
-            // Common Materials
+            // Common Solid Materials (Roofs, Caps, Pillars)
             const matBrick = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.brick, PALETTE.night.brick);
             const matBrickLight = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.brickLight, PALETTE.night.brickLight);
             const matWhite = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.whiteWall, PALETTE.night.whiteWall);
@@ -931,14 +1087,70 @@
             const matDarkRoof = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.darkRoof, PALETTE.night.darkRoof);
             const matDomeGreen = registerMat(new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.1 }), PALETTE.day.domeGreen, PALETTE.night.domeGreen);
             const matRoofGreen = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.greenRoof, PALETTE.night.greenRoof);
+            const matGlowTrim = createGlowTrimMat();
 
-            // Generic Building Creator with Raycast binding
+            // Apple Park Style Glowing Facade Materials (Side walls with warm glowing ribbon windows)
+            const facBrick4 = createFacadeMat(PALETTE.day.brick, PALETTE.night.brick, 4, 4, 'ribbon');
+            const facBrickLight4 = createFacadeMat(PALETTE.day.brickLight, PALETTE.night.brickLight, 4, 4, 'ribbon');
+            const facBrick3 = createFacadeMat(PALETTE.day.brick, PALETTE.night.brick, 3, 3, 'ribbon');
+            const facWhite4 = createFacadeMat(PALETTE.day.whiteWall, PALETTE.night.whiteWall, 4, 4, 'ribbon');
+            const facWhite6 = createFacadeMat(PALETTE.day.whiteWall, PALETTE.night.whiteWall, 6, 5, 'ribbon');
+            const facGrey3 = createFacadeMat(PALETTE.day.greyWall, PALETTE.night.greyWall, 3, 4, 'pavilion');
+            const facPavilion = createFacadeMat(PALETTE.day.brick, PALETTE.night.brick, 3, 5, 'pavilion');
+
+            const boxMats = (sideMat, capMat = matDarkRoof) => [sideMat, sideMat, capMat, capMat, sideMat, sideMat];
+            const cylMats = (sideMat, capMat = matDarkRoof) => [sideMat, capMat, capMat];
+
+            // Helper: Add 3D Apple Park style horizontal louver fins & glowing ground base rim
+            const addBoxLouvers = (group, w, h, d, floors = 4) => {
+                // Ground level glowing white base rim (Apple Park signature base edge)
+                const baseRim = new THREE.Mesh(new THREE.BoxGeometry(w + 1.0, 0.35, d + 1.0), matGlowTrim);
+                baseRim.position.y = 0.2;
+                group.add(baseRim);
+
+                // Horizontal canopy louver fins at each floor level
+                for (let f = 1; f <= floors; f++) {
+                    const fy = (h / floors) * f - 0.15;
+                    const fin = new THREE.Mesh(new THREE.BoxGeometry(w + 0.7, 0.28, d + 0.7), matGlowTrim);
+                    fin.position.y = fy;
+                    fin.castShadow = true;
+                    group.add(fin);
+                }
+            };
+
+            const addCylinderLouvers = (group, radius, h, floors = 3) => {
+                // Ground level glowing white circular rim
+                const baseRim = new THREE.Mesh(new THREE.CylinderGeometry(radius + 0.65, radius + 0.65, 0.35, 36), matGlowTrim);
+                baseRim.position.y = 0.2;
+                group.add(baseRim);
+
+                // Horizontal circular ring fins (Just like Apple Park Ring & Steve Jobs Theater)
+                for (let f = 1; f <= floors; f++) {
+                    const fy = (h / floors) * f - 0.15;
+                    const fin = new THREE.Mesh(new THREE.CylinderGeometry(radius + 0.5, radius + 0.5, 0.28, 36), matGlowTrim);
+                    fin.position.y = fy;
+                    fin.castShadow = true;
+                    group.add(fin);
+                }
+            };
+
+            // Generic Building Creator with Apple Park glowing windows & louvers
             const createBoxBuilding = (x, z, w, h, d, ry, bodyMat, roofMat = matDarkRoof, roofOverhang = 0.4, poiId = null) => {
                 const group = new THREE.Group();
                 group.position.set(x, 0, z);
                 group.rotation.y = ry;
 
-                const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+                // Determine glowing facade material based on wall type if poiId is a campus building
+                let appliedMat = bodyMat;
+                const floors = Math.max(2, Math.round(h / 4));
+                if (poiId) {
+                    if (bodyMat === matBrick) appliedMat = boxMats(facBrick4, matBrick);
+                    else if (bodyMat === matBrickLight) appliedMat = boxMats(facBrickLight4, matBrickLight);
+                    else if (bodyMat === matWhite) appliedMat = boxMats(floors >= 5 ? facWhite6 : facWhite4, matWhite);
+                    else if (bodyMat === matGrey) appliedMat = boxMats(facGrey3, matGrey);
+                }
+
+                const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), appliedMat);
                 body.position.y = h / 2;
                 body.castShadow = true; body.receiveShadow = true;
                 if (poiId) {
@@ -946,6 +1158,10 @@
                     clickableObjects.push(body);
                 }
                 group.add(body);
+
+                if (poiId) {
+                    addBoxLouvers(group, w, h, d, Math.min(5, floors));
+                }
 
                 if (roofMat) {
                     const roof = new THREE.Mesh(new THREE.BoxGeometry(w + roofOverhang, 0.6, d + roofOverhang), roofMat);
@@ -963,18 +1179,19 @@
             };
 
             // -------------------------------------------------------------
-            // 1. 関西大学 総合図書館 (General Library) - 赤レンガ＋ソーラーパネル
+            // 1. 関西大学 総合図書館 (General Library) - 赤レンガ＋ソーラーパネル＋Apple Park発光窓
             // -------------------------------------------------------------
             const libGrp = new THREE.Group();
             libGrp.position.set(55, 0, 10);
-            const libMain = new THREE.Mesh(new THREE.BoxGeometry(56, 17, 38), matBrickLight);
+            const libMain = new THREE.Mesh(new THREE.BoxGeometry(56, 17, 38), boxMats(facBrickLight4, matBrickLight));
             libMain.position.y = 8.5;
             libMain.castShadow = true; libMain.receiveShadow = true;
             libMain.userData.poiId = 'library';
             clickableObjects.push(libMain);
             libGrp.add(libMain);
+            addBoxLouvers(libGrp, 56, 17, 38, 4);
 
-            const libRoof = new THREE.Mesh(new THREE.BoxGeometry(57, 1.2, 39), matGrey);
+            const libRoof = new THREE.Mesh(new THREE.BoxGeometry(57, 1.2, 39), matDarkRoof);
             libRoof.position.y = 17.6;
             libRoof.castShadow = true;
             libRoof.userData.poiId = 'library';
@@ -1002,10 +1219,10 @@
             libGrp.add(stairs);
             scene.add(libGrp);
 
-            // Starbucks Coffee Terrace
+            // Starbucks Coffee Terrace (Glowing glass pavilion)
             const sbuxGrp = new THREE.Group();
             sbuxGrp.position.set(35, 0, 18);
-            const sbuxDeck = new THREE.Mesh(new THREE.BoxGeometry(14, 0.4, 10), new THREE.MeshStandardMaterial({ color: 0x8a6d4b }));
+            const sbuxDeck = new THREE.Mesh(new THREE.BoxGeometry(14, 0.4, 10), matGlowTrim);
             sbuxDeck.position.y = 0.2;
             sbuxDeck.userData.poiId = 'starbucks';
             clickableObjects.push(sbuxDeck);
@@ -1027,16 +1244,17 @@
             scene.add(sbuxGrp);
 
             // -------------------------------------------------------------
-            // 2. 関西大学博物館 (簡文館) - 村野藤吾設計の緑青ドーム
+            // 2. 関西大学博物館 (簡文館) - 村野藤吾設計の緑青ドーム＋円筒発光ホール
             // -------------------------------------------------------------
             const musGrp = new THREE.Group();
             musGrp.position.set(-75, 0, 15);
-            const musCenter = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 13, 36), matBrick);
+            const musCenter = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 13, 36), cylMats(facPavilion, matBrick));
             musCenter.position.y = 6.5;
             musCenter.castShadow = true; musCenter.receiveShadow = true;
             musCenter.userData.poiId = 'museum';
             clickableObjects.push(musCenter);
             musGrp.add(musCenter);
+            addCylinderLouvers(musGrp, 11, 13, 3);
 
             const musDome = new THREE.Mesh(new THREE.SphereGeometry(10.8, 36, 18, 0, Math.PI * 2, 0, Math.PI / 2), matDomeGreen);
             musDome.position.y = 13;
@@ -1049,7 +1267,7 @@
             musSpire.position.y = 24.5;
             musGrp.add(musSpire);
 
-            const wing1 = new THREE.Mesh(new THREE.BoxGeometry(32, 10, 14), matBrick);
+            const wing1 = new THREE.Mesh(new THREE.BoxGeometry(32, 10, 14), boxMats(facBrick3, matDarkRoof));
             wing1.position.set(10, 5, -8);
             wing1.rotation.y = -Math.PI / 6;
             wing1.castShadow = true; wing1.receiveShadow = true;
@@ -1057,26 +1275,32 @@
             clickableObjects.push(wing1);
             musGrp.add(wing1);
 
-            const wing2 = new THREE.Mesh(new THREE.BoxGeometry(32, 10, 14), matBrick);
+            const wing2 = new THREE.Mesh(new THREE.BoxGeometry(32, 10, 14), boxMats(facBrick3, matDarkRoof));
             wing2.position.set(-10, 5, -8);
             wing2.rotation.y = Math.PI / 6;
             wing2.castShadow = true; wing2.receiveShadow = true;
             wing2.userData.poiId = 'museum';
             clickableObjects.push(wing2);
             musGrp.add(wing2);
+
+            // Dynamic Firework Flash Light in front of Museum
+            fireworkLight = new THREE.PointLight(0xffdf80, 0, 95, 1.4);
+            fireworkLight.position.set(-75, 28, 28);
+            scene.add(fireworkLight);
             scene.add(musGrp);
 
             // -------------------------------------------------------------
-            // 3. 尚文館 (Shobunkan) - 半円筒かまぼこ型ヴォールト屋根
+            // 3. 尚文館 (Shobunkan) - 半円筒かまぼこ型ヴォールト屋根＋Apple Park発光窓
             // -------------------------------------------------------------
             const shobunGrp = new THREE.Group();
             shobunGrp.position.set(-30, 0, 20);
-            const shobunBody = new THREE.Mesh(new THREE.BoxGeometry(22, 15, 32), matBrickLight);
+            const shobunBody = new THREE.Mesh(new THREE.BoxGeometry(22, 15, 32), boxMats(facBrickLight4, matBrickLight));
             shobunBody.position.y = 7.5;
             shobunBody.castShadow = true; shobunBody.receiveShadow = true;
             shobunBody.userData.poiId = 'shobunkan';
             clickableObjects.push(shobunBody);
             shobunGrp.add(shobunBody);
+            addBoxLouvers(shobunGrp, 22, 15, 32, 4);
 
             const shobunRoof = new THREE.Mesh(
                 new THREE.CylinderGeometry(11, 11, 32.2, 32, 1, false, 0, Math.PI),
@@ -1095,14 +1319,15 @@
             // -------------------------------------------------------------
             const ibunGrp = new THREE.Group();
             ibunGrp.position.set(-30, 0, 65);
-            const ibunBody = new THREE.Mesh(new THREE.BoxGeometry(85, 15, 18), matBrick);
+            const ibunBody = new THREE.Mesh(new THREE.BoxGeometry(85, 15, 18), boxMats(facBrick4, matBrick));
             ibunBody.position.y = 7.5;
             ibunBody.castShadow = true; ibunBody.receiveShadow = true;
             ibunBody.userData.poiId = 'ibunkan';
             clickableObjects.push(ibunBody);
             ibunGrp.add(ibunBody);
+            addBoxLouvers(ibunGrp, 85, 15, 18, 4);
 
-            const ibunRoof = new THREE.Mesh(new THREE.BoxGeometry(86, 0.8, 19), matGrey);
+            const ibunRoof = new THREE.Mesh(new THREE.BoxGeometry(86, 0.8, 19), matDarkRoof);
             ibunRoof.position.y = 15.4;
             ibunRoof.castShadow = true;
             ibunRoof.userData.poiId = 'ibunkan';
@@ -1110,7 +1335,7 @@
             ibunGrp.add(ibunRoof);
 
             [-41, 41].forEach(tx => {
-                const tower = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 7, 24), matBrick);
+                const tower = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 7, 24), cylMats(facPavilion, matBrick));
                 tower.position.set(tx, 18.5, 0);
                 tower.castShadow = true;
                 tower.userData.poiId = 'ibunkan';
@@ -1120,7 +1345,7 @@
                 const tDome = new THREE.Mesh(new THREE.SphereGeometry(4.5, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), matDomeGreen);
                 tDome.position.set(tx, 22, 0);
                 tDome.castShadow = true;
-                tower.userData.poiId = 'ibunkan';
+                tDome.userData.poiId = 'ibunkan';
                 clickableObjects.push(tDome);
                 ibunGrp.add(tDome);
             });
@@ -1133,7 +1358,7 @@
             // -------------------------------------------------------------
             // 5. 岩崎記念館 (Iwasaki Memorial Hall)
             // -------------------------------------------------------------
-            createBoxBuilding(-55, 95, 65, 15, 18, 0, matBrick, matGrey, 0.4, 'iwasaki');
+            createBoxBuilding(-55, 95, 65, 15, 18, 0, matBrick, matDarkRoof, 0.4, 'iwasaki');
 
             // -------------------------------------------------------------
             // 6. KUシンフォニーホール & ディノア - 扇状カーブ＋屋上緑化テラス
@@ -1143,14 +1368,17 @@
             symGrp.rotation.y = -Math.PI / 8;
             for (let step = 0; step < 3; step++) {
                 const sw = 36 - step * 5;
-                const sh = 4 + step * 4;
                 const sd = 20 - step * 3;
-                const b = new THREE.Mesh(new THREE.BoxGeometry(sw, 4, sd), matBrickLight);
+                const b = new THREE.Mesh(new THREE.BoxGeometry(sw, 4, sd), boxMats(facBrick3, matBrickLight));
                 b.position.set(0, step * 4 + 2, step * 2);
                 b.castShadow = true; b.receiveShadow = true;
                 b.userData.poiId = 'symphony';
                 clickableObjects.push(b);
                 symGrp.add(b);
+
+                const fin = new THREE.Mesh(new THREE.BoxGeometry(sw + 0.8, 0.3, sd + 0.8), matGlowTrim);
+                fin.position.set(0, step * 4 + 3.9, step * 2);
+                symGrp.add(fin);
 
                 const gr = new THREE.Mesh(new THREE.BoxGeometry(sw + 0.2, 0.4, sd + 0.2), matRoofGreen);
                 gr.position.set(0, step * 4 + 4.2, step * 2);
@@ -1172,12 +1400,13 @@
             // -------------------------------------------------------------
             const b4Grp = new THREE.Group();
             b4Grp.position.set(25, 0, -80);
-            const b4High = new THREE.Mesh(new THREE.BoxGeometry(46, 26, 22), matWhite);
+            const b4High = new THREE.Mesh(new THREE.BoxGeometry(46, 26, 22), boxMats(facWhite6, matWhite));
             b4High.position.y = 13;
             b4High.castShadow = true; b4High.receiveShadow = true;
             b4High.userData.poiId = 'bldg4';
             clickableObjects.push(b4High);
             b4Grp.add(b4High);
+            addBoxLouvers(b4Grp, 46, 26, 22, 6);
 
             const b4Roof1 = new THREE.Mesh(new THREE.BoxGeometry(47, 1, 23), matDarkRoof);
             b4Roof1.position.y = 26.5;
@@ -1186,7 +1415,7 @@
             clickableObjects.push(b4Roof1);
             b4Grp.add(b4Roof1);
 
-            const b4Wing = new THREE.Mesh(new THREE.BoxGeometry(20, 18, 48), matWhite);
+            const b4Wing = new THREE.Mesh(new THREE.BoxGeometry(20, 18, 48), boxMats(facWhite4, matWhite));
             b4Wing.position.set(24, 9, 13);
             b4Wing.castShadow = true; b4Wing.receiveShadow = true;
             b4Wing.userData.poiId = 'bldg4';
@@ -1200,7 +1429,7 @@
             clickableObjects.push(b4Roof2);
             b4Grp.add(b4Roof2);
 
-            const bridge = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 6), matGrey);
+            const bridge = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 6), boxMats(facGrey3, matGrey));
             bridge.position.set(10, 12, 0);
             b4Grp.add(bridge);
             scene.add(b4Grp);
@@ -1214,21 +1443,29 @@
             // 10. 第2学舎 (経済・商学部) & 国際部
             // -------------------------------------------------------------
             createBoxBuilding(110, -10, 24, 18, 70, Math.PI / 12, matWhite, matDarkRoof, 0.4, 'bldg2');
-            createBoxBuilding(98, 15, 22, 12, 30, Math.PI / 12, matWhite, matGrey, 0.4, 'bldg2');
+            createBoxBuilding(98, 15, 22, 12, 30, Math.PI / 12, matWhite, matDarkRoof, 0.4, 'bldg2');
 
             // 国際部 (Round Glass Dome atop)
             const intlGrp = new THREE.Group();
             intlGrp.position.set(120, 0, 45);
-            const intlBody = new THREE.Mesh(new THREE.BoxGeometry(28, 15, 24), matWhite);
+            const intlBody = new THREE.Mesh(new THREE.BoxGeometry(28, 15, 24), boxMats(facWhite4, matWhite));
             intlBody.position.y = 7.5;
             intlBody.castShadow = true; intlBody.receiveShadow = true;
             intlBody.userData.poiId = 'kokusai';
             clickableObjects.push(intlBody);
             intlGrp.add(intlBody);
+            addBoxLouvers(intlGrp, 28, 15, 24, 4);
 
             const intlDome = new THREE.Mesh(
                 new THREE.SphereGeometry(6, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-                new THREE.MeshStandardMaterial({ color: 0x64b5f6, roughness: 0.1, transparent: true, opacity: 0.8 })
+                new THREE.MeshStandardMaterial({
+                    color: 0x90caf9,
+                    emissive: 0xffe8a3,
+                    emissiveIntensity: 0.45,
+                    roughness: 0.1,
+                    transparent: true,
+                    opacity: 0.85
+                })
             );
             intlDome.position.y = 15;
             intlDome.userData.poiId = 'kokusai';
@@ -1237,33 +1474,34 @@
             scene.add(intlGrp);
 
             // -------------------------------------------------------------
-            // 11. レストラン チルコロ (円神館) - 特徴的な円形建築
+            // 11. レストラン チルコロ (円神館) - Apple Park リング＆Steve Jobs Theater風円形発光建築
             // -------------------------------------------------------------
             const circoloGrp = new THREE.Group();
             circoloGrp.position.set(105, 0, 80);
-            const cBody = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 11, 36), matGrey);
+            const cBody = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 11, 36), cylMats(facGrey3, matDarkRoof));
             cBody.position.y = 5.5;
             cBody.castShadow = true; cBody.receiveShadow = true;
             cBody.userData.poiId = 'circolo';
             clickableObjects.push(cBody);
             circoloGrp.add(cBody);
+            addCylinderLouvers(circoloGrp, 14, 11, 3);
 
-            const cRing = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 1.2, 36), matDarkRoof);
-            cRing.position.y = 11.6;
+            const cRing = new THREE.Mesh(new THREE.CylinderGeometry(15.2, 15.2, 1.0, 36), matDarkRoof);
+            cRing.position.y = 11.5;
             cRing.castShadow = true;
             cRing.userData.poiId = 'circolo';
             clickableObjects.push(cRing);
             circoloGrp.add(cRing);
 
-            const cSkylight = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 1.5, 24), matWhite);
-            cSkylight.position.y = 12.8;
+            const cSkylight = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 1.5, 24), matGlowTrim);
+            cSkylight.position.y = 12.4;
             circoloGrp.add(cSkylight);
             scene.add(circoloGrp);
 
             // -------------------------------------------------------------
             // 12. 正門・時計塔・第一診療所
             // -------------------------------------------------------------
-            createBoxBuilding(65, 75, 46, 14, 16, 0, matWhite, matGrey, 0.4, 'clinic');
+            createBoxBuilding(65, 75, 46, 14, 16, 0, matWhite, matDarkRoof, 0.4, 'clinic');
 
             const clockGrp = new THREE.Group();
             clockGrp.position.set(42, 0, 78);
@@ -1274,7 +1512,7 @@
             clickableObjects.push(towerBase);
             clockGrp.add(towerBase);
 
-            const faceMat = new THREE.MeshBasicMaterial({ color: 0x1e293b });
+            const faceMat = new THREE.MeshBasicMaterial({ color: 0xfff3c4 });
             [-1.85, 1.85].forEach(x => {
                 const face = new THREE.Mesh(new THREE.CircleGeometry(1.1, 16), faceMat);
                 face.position.set(x, 19, 0);
@@ -1304,16 +1542,17 @@
             createBoxBuilding(-110, 75, 38, 17, 20, 0, matBrick, matDarkRoof, 0.4, 'bldg1');
 
             // -------------------------------------------------------------
-            // 14. 中央体育館 (Central Gym - 大アーチヴォールトドーム屋根)
+            // 14. 中央体育館 (Central Gym - 大アーチヴォールトドーム屋根＋発光窓)
             // -------------------------------------------------------------
             const cGymGrp = new THREE.Group();
             cGymGrp.position.set(-130, 0, -20);
-            const cGymBase = new THREE.Mesh(new THREE.BoxGeometry(36, 8, 52), matWhite);
+            const cGymBase = new THREE.Mesh(new THREE.BoxGeometry(36, 8, 52), boxMats(facWhite4, matWhite));
             cGymBase.position.y = 4;
             cGymBase.castShadow = true; cGymBase.receiveShadow = true;
             cGymBase.userData.poiId = 'gym-central';
             clickableObjects.push(cGymBase);
             cGymGrp.add(cGymBase);
+            addBoxLouvers(cGymGrp, 36, 8, 52, 2);
 
             const cGymVault = new THREE.Mesh(
                 new THREE.CylinderGeometry(18, 18, 52, 36, 1, false, 0, Math.PI),
@@ -1328,16 +1567,17 @@
             scene.add(cGymGrp);
 
             // -------------------------------------------------------------
-            // 15. 東体育館 (East Gym - 屋上テニスコート)
+            // 15. 東体育館 (East Gym - 屋上テニスコート＋Apple Park発光窓)
             // -------------------------------------------------------------
             const eGymGrp = new THREE.Group();
             eGymGrp.position.set(-65, 0, -75);
-            const eGymBody = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 50), matWhite);
+            const eGymBody = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 50), boxMats(facWhite4, matWhite));
             eGymBody.position.y = 7;
             eGymBody.castShadow = true; eGymBody.receiveShadow = true;
             eGymBody.userData.poiId = 'gym-east';
             clickableObjects.push(eGymBody);
             eGymGrp.add(eGymBody);
+            addBoxLouvers(eGymGrp, 34, 14, 50, 3);
 
             const tennisTex = createTennisTexture();
             const tennisMesh = new THREE.Mesh(new THREE.PlaneGeometry(32, 48), new THREE.MeshStandardMaterial({ map: tennisTex, roughness: 0.8 }));
@@ -1687,6 +1927,217 @@
         }
 
         // ==========================================
+        // 8.5 Museum Front Fireworks System (Dark Mode Exclusive)
+        // ==========================================
+        const FIREWORK_PALETTES = [
+            [0xffca28, 0xffe082, 0xff8f00], // Rich Gold & Amber
+            [0xff4081, 0xff80ab, 0xffd54f], // Vivid Sakura Pink & Gold
+            [0x00e5ff, 0x64ffda, 0xffeb3b], // Electric Cyan & Emerald Gold
+            [0xd500f9, 0xff4081, 0xffe57f]  // Royal Magenta & Gold
+        ];
+
+        function launchMuseumFirework(instantBurst = false) {
+            if (!sparkTexture) sparkTexture = createSparkTexture();
+
+            // Museum is at [-75, 0, 15], front plaza is around [-75, 0, 29]
+            const startX = -75 + (Math.random() - 0.5) * 16;
+            const startZ = 29 + (Math.random() - 0.5) * 8;
+            const targetY = 23 + Math.random() * 9;
+            const palette = FIREWORK_PALETTES[Math.floor(Math.random() * FIREWORK_PALETTES.length)];
+
+            const fw = {
+                phase: instantBurst ? 'burst' : 'ascend',
+                x: startX,
+                y: instantBurst ? targetY : 1.5,
+                z: startZ,
+                targetY: targetY,
+                vy: 23 + Math.random() * 5,
+                palette: palette,
+                age: 0,
+                maxLife: 1.5 + Math.random() * 0.35,
+                rocketMesh: null,
+                burstPoints: null,
+                velocities: []
+            };
+
+            if (!instantBurst) {
+                const rocketGeo = new THREE.BufferGeometry();
+                const posArr = new Float32Array(7 * 3);
+                for (let i = 0; i < 7; i++) {
+                    posArr[i * 3] = startX;
+                    posArr[i * 3 + 1] = fw.y - i * 0.55;
+                    posArr[i * 3 + 2] = startZ;
+                }
+                rocketGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+                const rocketMat = new THREE.PointsMaterial({
+                    size: 1.8,
+                    map: sparkTexture,
+                    color: palette[0],
+                    transparent: true,
+                    opacity: 0.95,
+                    depthWrite: false,
+                    blending: THREE.AdditiveBlending
+                });
+                fw.rocketMesh = new THREE.Points(rocketGeo, rocketMat);
+                scene.add(fw.rocketMesh);
+            } else {
+                triggerFireworkBurst(fw);
+            }
+
+            fireworks.push(fw);
+        }
+
+        function triggerFireworkBurst(fw) {
+            if (fw.rocketMesh) {
+                scene.remove(fw.rocketMesh);
+                fw.rocketMesh.geometry.dispose();
+                fw.rocketMesh.material.dispose();
+                fw.rocketMesh = null;
+            }
+
+            fw.phase = 'burst';
+            fw.age = 0;
+
+            const count = 88;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
+            const velocities = [];
+
+            for (let i = 0; i < count; i++) {
+                positions[i * 3] = fw.x;
+                positions[i * 3 + 1] = fw.y;
+                positions[i * 3 + 2] = fw.z;
+
+                // Dual-shell peony firework (inner core + outer crown)
+                const u = Math.random();
+                const v = Math.random();
+                const theta = u * 2.0 * Math.PI;
+                const phi = Math.acos(2.0 * v - 1.0);
+                const shellSpeed = (i < 28 ? 5.2 : 10.5) + (Math.random() - 0.5) * 1.8;
+
+                velocities.push({
+                    vx: Math.sin(phi) * Math.cos(theta) * shellSpeed,
+                    vy: Math.cos(phi) * shellSpeed + 1.2,
+                    vz: Math.sin(phi) * Math.sin(theta) * shellSpeed
+                });
+
+                const col = new THREE.Color(fw.palette[i % fw.palette.length]);
+                colors[i * 3] = col.r;
+                colors[i * 3 + 1] = col.g;
+                colors[i * 3 + 2] = col.b;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const mat = new THREE.PointsMaterial({
+                size: 1.75,
+                map: sparkTexture,
+                vertexColors: true,
+                transparent: true,
+                opacity: 1.0,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            fw.burstPoints = new THREE.Points(geo, mat);
+            fw.velocities = velocities;
+            scene.add(fw.burstPoints);
+
+            // Flash museum front light with firework color
+            if (fireworkLight && isNight) {
+                fireworkLight.color.setHex(fw.palette[0]);
+                fireworkLight.position.set(fw.x, fw.y, fw.z);
+                fireworkLight.intensity = 2.4;
+            }
+        }
+
+        function updateMuseumFireworks(dt) {
+            if (!isNight) return;
+
+            fireworkTimer += dt;
+            if (fireworkTimer > 0.68) {
+                fireworkTimer = 0;
+                if (fireworks.length < 4) {
+                    launchMuseumFirework(false);
+                }
+            }
+
+            // Decay flash light smoothly
+            if (fireworkLight && fireworkLight.intensity > 0.1) {
+                fireworkLight.intensity *= Math.pow(0.18, dt);
+            }
+
+            for (let i = fireworks.length - 1; i >= 0; i--) {
+                const fw = fireworks[i];
+                if (fw.phase === 'ascend') {
+                    fw.y += fw.vy * dt;
+                    if (fw.rocketMesh) {
+                        const posAttr = fw.rocketMesh.geometry.attributes.position;
+                        for (let j = 0; j < 7; j++) {
+                            posAttr.setXYZ(j, fw.x + (Math.random() - 0.5) * 0.2, fw.y - j * 0.6, fw.z + (Math.random() - 0.5) * 0.2);
+                        }
+                        posAttr.needsUpdate = true;
+                    }
+                    if (fw.y >= fw.targetY) {
+                        triggerFireworkBurst(fw);
+                    }
+                } else if (fw.phase === 'burst') {
+                    fw.age += dt;
+                    const progress = fw.age / fw.maxLife;
+                    if (progress >= 1.0) {
+                        if (fw.burstPoints) {
+                            scene.remove(fw.burstPoints);
+                            fw.burstPoints.geometry.dispose();
+                            fw.burstPoints.material.dispose();
+                        }
+                        fireworks.splice(i, 1);
+                        continue;
+                    }
+
+                    const posAttr = fw.burstPoints.geometry.attributes.position;
+                    const drag = Math.pow(0.32, dt);
+                    const gravity = 5.5 * dt;
+
+                    for (let j = 0; j < fw.velocities.length; j++) {
+                        const vel = fw.velocities[j];
+                        vel.vx *= drag;
+                        vel.vz *= drag;
+                        vel.vy = vel.vy * drag - gravity;
+
+                        const px = posAttr.getX(j) + vel.vx * dt;
+                        const py = posAttr.getY(j) + vel.vy * dt;
+                        const pz = posAttr.getZ(j) + vel.vz * dt;
+                        posAttr.setXYZ(j, px, py, pz);
+                    }
+                    posAttr.needsUpdate = true;
+
+                    // Smooth sparkle fade out
+                    fw.burstPoints.material.opacity = Math.max(0, 1.0 - Math.pow(progress, 1.4));
+                    fw.burstPoints.material.size = 1.75 * (1.0 - progress * 0.3);
+                }
+            }
+        }
+
+        function clearMuseumFireworks() {
+            fireworks.forEach(fw => {
+                if (fw.rocketMesh) {
+                    scene.remove(fw.rocketMesh);
+                    fw.rocketMesh.geometry.dispose();
+                    fw.rocketMesh.material.dispose();
+                }
+                if (fw.burstPoints) {
+                    scene.remove(fw.burstPoints);
+                    fw.burstPoints.geometry.dispose();
+                    fw.burstPoints.material.dispose();
+                }
+            });
+            fireworks = [];
+            if (fireworkLight) fireworkLight.intensity = 0;
+        }
+
+        // ==========================================
         // 9. Day / Night Theme Switching
         // ==========================================
         function toggleTheme() {
@@ -1698,7 +2149,7 @@
             const searchResults = document.getElementById('search-results');
 
             if (isNight) {
-                // Night Mode (Recreates Photo 1 - Slate Blue Apple Maps 3D View)
+                // Night Mode (Recreates Photo 1 + Apple Park glowing windows + Museum Fireworks)
                 document.body.classList.replace('theme-day', 'theme-night');
                 themeIcon.setAttribute('data-lucide', 'sun');
                 themeBtn.classList.add('text-amber-400');
@@ -1709,20 +2160,38 @@
                 scene.fog.color.setHex(PALETTE.night.fog);
 
                 // Ambient & Moon Lights
-                ambientLight.intensity = 0.95;
-                ambientLight.color.setHex(0x7890b8);
+                ambientLight.intensity = 0.85;
+                ambientLight.color.setHex(0x6b84ad);
                 sunLight.intensity = 0.05;
-                moonLight.intensity = 1.25;
+                moonLight.intensity = 1.15;
 
-                // Materials
+                // Solid Materials
                 dayMaterials.forEach(mat => {
                     mat.color.setHex(mat.userData.nightColor);
                     mat.roughness = mat.userData.nightRough;
                     mat.needsUpdate = true;
                 });
 
+                // Apple Park Glowing Window Materials (Warm luminous ribbon glow in dark mode)
+                windowMaterials.forEach(mat => {
+                    mat.color.setHex(mat.userData.nightColor);
+                    mat.emissiveIntensity = mat.userData.nightEmissive;
+                    mat.roughness = mat.userData.nightRough;
+                    mat.needsUpdate = true;
+                });
+
+                // Glowing White Louver & Ground Base Trims
+                glowTrimMaterials.forEach(mat => {
+                    mat.emissiveIntensity = 0.92;
+                    mat.needsUpdate = true;
+                });
+
                 // Window & Flood Lights ON
                 windowLights.forEach(wl => wl.light.intensity = wl.nightIntensity);
+
+                // Launch initial celebratory fireworks in front of Museum immediately
+                launchMuseumFirework(true);
+                setTimeout(() => { if (isNight) launchMuseumFirework(false); }, 250);
 
                 // UI Glass Dark Mode
                 topCard.classList.replace('glass-panel', 'glass-panel-dark');
@@ -1738,7 +2207,7 @@
                     lbl.classList.replace('text-gray-800', 'text-white');
                 });
             } else {
-                // Day Mode (Recreates Photo 2 - Photoreal Satellite View)
+                // Day Mode (Recreates Photo 2 + Apple Park lit windows)
                 document.body.classList.replace('theme-night', 'theme-day');
                 themeIcon.setAttribute('data-lucide', 'moon');
                 themeBtn.classList.remove('text-amber-400');
@@ -1758,8 +2227,23 @@
                     mat.needsUpdate = true;
                 });
 
+                windowMaterials.forEach(mat => {
+                    mat.color.setHex(mat.userData.dayColor);
+                    mat.emissiveIntensity = mat.userData.dayEmissive;
+                    mat.roughness = mat.userData.dayRough;
+                    mat.needsUpdate = true;
+                });
+
+                glowTrimMaterials.forEach(mat => {
+                    mat.emissiveIntensity = 0.35;
+                    mat.needsUpdate = true;
+                });
+
                 // Window & Flood Lights OFF
                 windowLights.forEach(wl => wl.light.intensity = 0);
+
+                // Clear fireworks in day mode
+                clearMuseumFireworks();
 
                 // UI Glass Light Mode
                 topCard.classList.replace('glass-panel-dark', 'glass-panel');
@@ -1937,8 +2421,12 @@
         // ==========================================
         // 11. Animation Loop
         // ==========================================
+        const clock = new THREE.Clock();
+
         function animate() {
             requestAnimationFrame(animate);
+
+            const dt = Math.min(clock.getDelta(), 0.1);
 
             // 1. Update Tween
             TWEEN.update();
@@ -1955,6 +2443,9 @@
                     car.mesh.position.x = 145;
                 }
             });
+
+            // 3.5 Update Museum Fireworks in Dark Mode
+            updateMuseumFireworks(dt);
 
             // 4. Update Compass needle rotation based on camera angle
             const compassArrow = document.getElementById('compass-arrow');
