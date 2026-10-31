@@ -117,11 +117,11 @@
     <div id="poi-container" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
 
     <!-- UI Overlay: Top Navigation Bar -->
-    <div class="absolute top-4 left-4 right-4 md:right-auto md:w-96 z-30 pointer-events-none">
+    <div class="absolute top-4 left-4 right-4 md:right-auto md:w-[430px] z-30 pointer-events-none">
         <div id="top-card" class="glass-panel rounded-3xl p-4 shadow-2xl pointer-events-auto transition-colors duration-500">
             <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-md">
+                    <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-md flex-shrink-0">
                         <i data-lucide="map-pin" class="w-5 h-5"></i>
                     </div>
                     <div>
@@ -130,19 +130,36 @@
                     </div>
                 </div>
 
-                <!-- Day/Night Toggle & Info -->
-                <div class="flex items-center space-x-1">
-                    <button id="theme-btn" title="昼/夜モード切替 (写真1/写真2再現)" class="p-2.5 rounded-full hover:bg-black/5 active:scale-95 transition text-gray-700">
-                        <i id="theme-icon" data-lucide="moon" class="w-5 h-5"></i>
-                    </button>
-                    <button id="labels-btn" title="施設ラベル表示切替" class="p-2.5 rounded-full hover:bg-black/5 active:scale-95 transition text-blue-600">
-                        <i data-lucide="tag" class="w-5 h-5"></i>
-                    </button>
-                </div>
+                <!-- Day/Night Toggle -->
+                <button id="theme-btn" title="昼/夜モード切替" class="flex items-center space-x-1.5 px-3 py-2 rounded-2xl bg-black/5 hover:bg-black/10 active:scale-95 transition text-gray-700 border border-black/5">
+                    <i id="theme-icon" data-lucide="moon" class="w-4 h-4"></i>
+                    <span id="theme-label" class="text-xs font-extrabold">夜モード</span>
+                </button>
+            </div>
+
+            <!-- Action Buttons Row: Facility Navigation ON/OFF & Firework Boost Button -->
+            <div class="mt-3 grid grid-cols-2 gap-2">
+                <!-- Facility Info & Navigation Toggle Button -->
+                <button id="labels-btn" title="施設説明ナビゲーションの表示・非表示を切り替えます" class="flex items-center justify-between px-3 py-2 rounded-2xl bg-blue-600 text-white shadow-md hover:bg-blue-700 active:scale-95 transition border border-blue-400/40">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="message-square-more" class="w-4 h-4 flex-shrink-0"></i>
+                        <span class="text-xs font-extrabold tracking-tight">施設説明ナビ</span>
+                    </div>
+                    <span id="labels-status" class="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/25 text-white ml-1">ON</span>
+                </button>
+
+                <!-- Powerful Fireworks Boost Button -->
+                <button id="firework-boost-btn" title="博物館正面の花火を超強力なスターマイン連発にします" class="flex items-center justify-between px-3 py-2 rounded-2xl bg-slate-800/90 text-amber-300 shadow-md hover:bg-slate-900 active:scale-95 transition border border-amber-400/30">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="sparkles" class="w-4 h-4 flex-shrink-0 text-amber-400"></i>
+                        <span class="text-xs font-extrabold tracking-tight">花火を強力化</span>
+                    </div>
+                    <span id="firework-boost-status" class="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/15 text-amber-200 ml-1">OFF</span>
+                </button>
             </div>
 
             <!-- Quick Search Bar -->
-            <div class="mt-3 relative">
+            <div class="mt-2.5 relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
                 <input id="search-input" type="text" placeholder="施設・学舎・グラウンドを検索..." 
                     class="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-gray-100/80 border border-transparent focus:border-blue-400 focus:bg-white focus:outline-none transition text-gray-800 placeholder-gray-400" />
@@ -577,6 +594,7 @@
         let isNight = false;
         let is3D = true;
         let showLabels = true;
+        let isFireworkBoost = false;
         let selectedPoiId = null;
 
         // Dynamic Lighting & Materials References
@@ -1872,10 +1890,15 @@
             selectedPoiId = id;
 
             animateCamera(poi.camPos, [poi.pos[0], 0, poi.pos[2]]);
-            showDetailCard(poi);
+            if (showLabels) {
+                showDetailCard(poi);
+            }
         }
 
         function showDetailCard(poi) {
+            // Do not display facility explanation when facility navigation is OFF
+            if (!showLabels) return;
+
             const card = document.getElementById('detail-card');
             const iconBox = document.getElementById('detail-icon-box');
             const icon = document.getElementById('detail-icon');
@@ -1912,6 +1935,9 @@
 
         // Click Raycasting on 3D Buildings
         function onPointerClick(e) {
+            // Disable building tap explanation when facility navigation is hidden
+            if (!showLabels) return;
+
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
@@ -1927,22 +1953,28 @@
         }
 
         // ==========================================
-        // 8.5 Museum Front Fireworks System (Dark Mode Exclusive)
+        // 8.5 Museum Front Fireworks System (Dark Mode & Super Boost)
         // ==========================================
         const FIREWORK_PALETTES = [
             [0xffca28, 0xffe082, 0xff8f00], // Rich Gold & Amber
             [0xff4081, 0xff80ab, 0xffd54f], // Vivid Sakura Pink & Gold
             [0x00e5ff, 0x64ffda, 0xffeb3b], // Electric Cyan & Emerald Gold
-            [0xd500f9, 0xff4081, 0xffe57f]  // Royal Magenta & Gold
+            [0xd500f9, 0xff4081, 0xffe57f], // Royal Magenta & Gold
+            [0xff5252, 0xffca28, 0x00e676, 0x40c4ff, 0xe040fb], // Rainbow Star
+            [0xfff59d, 0xffd54f, 0xffb300, 0xffffff] // Golden Kamuro Willow
         ];
 
-        function launchMuseumFirework(instantBurst = false) {
+        function launchMuseumFirework(instantBurst = false, forceBoost = null) {
             if (!sparkTexture) sparkTexture = createSparkTexture();
 
+            const boosted = forceBoost !== null ? forceBoost : isFireworkBoost;
+
             // Museum is at [-75, 0, 15], front plaza is around [-75, 0, 29]
-            const startX = -75 + (Math.random() - 0.5) * 16;
-            const startZ = 29 + (Math.random() - 0.5) * 8;
-            const targetY = 23 + Math.random() * 9;
+            const spreadX = boosted ? 40 : 16;
+            const spreadZ = boosted ? 22 : 8;
+            const startX = -75 + (Math.random() - 0.5) * spreadX;
+            const startZ = 29 + (Math.random() - 0.5) * spreadZ;
+            const targetY = boosted ? (24 + Math.random() * 19) : (23 + Math.random() * 9);
             const palette = FIREWORK_PALETTES[Math.floor(Math.random() * FIREWORK_PALETTES.length)];
 
             const fw = {
@@ -1951,10 +1983,11 @@
                 y: instantBurst ? targetY : 1.5,
                 z: startZ,
                 targetY: targetY,
-                vy: 23 + Math.random() * 5,
+                vy: boosted ? (30 + Math.random() * 10) : (23 + Math.random() * 5),
                 palette: palette,
+                boosted: boosted,
                 age: 0,
-                maxLife: 1.5 + Math.random() * 0.35,
+                maxLife: boosted ? (1.85 + Math.random() * 0.45) : (1.5 + Math.random() * 0.35),
                 rocketMesh: null,
                 burstPoints: null,
                 velocities: []
@@ -1970,11 +2003,11 @@
                 }
                 rocketGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
                 const rocketMat = new THREE.PointsMaterial({
-                    size: 1.8,
+                    size: boosted ? 2.4 : 1.8,
                     map: sparkTexture,
                     color: palette[0],
                     transparent: true,
-                    opacity: 0.95,
+                    opacity: 0.98,
                     depthWrite: false,
                     blending: THREE.AdditiveBlending
                 });
@@ -1998,7 +2031,8 @@
             fw.phase = 'burst';
             fw.age = 0;
 
-            const count = 88;
+            const boosted = fw.boosted;
+            const count = boosted ? 250 : 88;
             const geo = new THREE.BufferGeometry();
             const positions = new Float32Array(count * 3);
             const colors = new Float32Array(count * 3);
@@ -2009,16 +2043,29 @@
                 positions[i * 3 + 1] = fw.y;
                 positions[i * 3 + 2] = fw.z;
 
-                // Dual-shell peony firework (inner core + outer crown)
                 const u = Math.random();
                 const v = Math.random();
                 const theta = u * 2.0 * Math.PI;
                 const phi = Math.acos(2.0 * v - 1.0);
-                const shellSpeed = (i < 28 ? 5.2 : 10.5) + (Math.random() - 0.5) * 1.8;
+
+                let shellSpeed;
+                if (boosted) {
+                    // Triple-shell super chrysanthemum + outer ring
+                    if (i < 55) {
+                        shellSpeed = 6.0 + (Math.random() - 0.5) * 2.0;
+                    } else if (i < 165) {
+                        shellSpeed = 12.8 + (Math.random() - 0.5) * 2.4;
+                    } else {
+                        shellSpeed = 18.2 + (Math.random() - 0.5) * 2.8;
+                    }
+                } else {
+                    // Dual-shell peony firework (inner core + outer crown)
+                    shellSpeed = (i < 28 ? 5.2 : 10.5) + (Math.random() - 0.5) * 1.8;
+                }
 
                 velocities.push({
                     vx: Math.sin(phi) * Math.cos(theta) * shellSpeed,
-                    vy: Math.cos(phi) * shellSpeed + 1.2,
+                    vy: Math.cos(phi) * shellSpeed + (boosted ? 1.8 : 1.2),
                     vz: Math.sin(phi) * Math.sin(theta) * shellSpeed
                 });
 
@@ -2032,7 +2079,7 @@
             geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
             const mat = new THREE.PointsMaterial({
-                size: 1.75,
+                size: boosted ? 2.35 : 1.75,
                 map: sparkTexture,
                 vertexColors: true,
                 transparent: true,
@@ -2049,7 +2096,8 @@
             if (fireworkLight && isNight) {
                 fireworkLight.color.setHex(fw.palette[0]);
                 fireworkLight.position.set(fw.x, fw.y, fw.z);
-                fireworkLight.intensity = 2.4;
+                fireworkLight.intensity = boosted ? 5.2 : 2.4;
+                fireworkLight.distance = boosted ? 145 : 75;
             }
         }
 
@@ -2057,10 +2105,16 @@
             if (!isNight) return;
 
             fireworkTimer += dt;
-            if (fireworkTimer > 0.68) {
+            const interval = isFireworkBoost ? 0.16 : 0.68;
+            const maxConcurrent = isFireworkBoost ? 16 : 4;
+
+            if (fireworkTimer > interval) {
                 fireworkTimer = 0;
-                if (fireworks.length < 4) {
+                if (fireworks.length < maxConcurrent) {
                     launchMuseumFirework(false);
+                    if (isFireworkBoost && Math.random() < 0.45 && fireworks.length < maxConcurrent) {
+                        launchMuseumFirework(false);
+                    }
                 }
             }
 
@@ -2114,8 +2168,9 @@
                     posAttr.needsUpdate = true;
 
                     // Smooth sparkle fade out
+                    const baseSize = fw.boosted ? 2.35 : 1.75;
                     fw.burstPoints.material.opacity = Math.max(0, 1.0 - Math.pow(progress, 1.4));
-                    fw.burstPoints.material.size = 1.75 * (1.0 - progress * 0.3);
+                    fw.burstPoints.material.size = baseSize * (1.0 - progress * 0.3);
                 }
             }
         }
@@ -2137,6 +2192,22 @@
             if (fireworkLight) fireworkLight.intensity = 0;
         }
 
+        function updateFireworkBoostButtonUI() {
+            const boostBtn = document.getElementById('firework-boost-btn');
+            const boostStatus = document.getElementById('firework-boost-status');
+            if (!boostBtn || !boostStatus) return;
+
+            if (isFireworkBoost) {
+                boostBtn.className = 'flex items-center justify-between px-3 py-2 rounded-2xl bg-gradient-to-r from-pink-600 via-red-500 to-amber-500 text-white shadow-lg hover:brightness-110 active:scale-95 transition border border-amber-300';
+                boostStatus.textContent = '強力ON!';
+                boostStatus.className = 'text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white text-red-600 ml-1 shadow-sm';
+            } else {
+                boostBtn.className = 'flex items-center justify-between px-3 py-2 rounded-2xl bg-slate-800/90 text-amber-300 shadow-md hover:bg-slate-900 active:scale-95 transition border border-amber-400/30';
+                boostStatus.textContent = 'OFF';
+                boostStatus.className = 'text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/15 text-amber-200 ml-1';
+            }
+        }
+
         // ==========================================
         // 9. Day / Night Theme Switching
         // ==========================================
@@ -2144,6 +2215,7 @@
             isNight = !isNight;
             const themeBtn = document.getElementById('theme-btn');
             const themeIcon = document.getElementById('theme-icon');
+            const themeLabel = document.getElementById('theme-label');
             const topCard = document.getElementById('top-card');
             const detailPanel = document.getElementById('detail-panel');
             const searchResults = document.getElementById('search-results');
@@ -2152,6 +2224,7 @@
                 // Night Mode (Recreates Photo 1 + Apple Park glowing windows + Museum Fireworks)
                 document.body.classList.replace('theme-day', 'theme-night');
                 themeIcon.setAttribute('data-lucide', 'sun');
+                if (themeLabel) themeLabel.textContent = '昼モードへ';
                 themeBtn.classList.add('text-amber-400');
                 themeBtn.classList.remove('text-gray-700');
 
@@ -2210,6 +2283,7 @@
                 // Day Mode (Recreates Photo 2 + Apple Park lit windows)
                 document.body.classList.replace('theme-night', 'theme-day');
                 themeIcon.setAttribute('data-lucide', 'moon');
+                if (themeLabel) themeLabel.textContent = '夜モード';
                 themeBtn.classList.remove('text-amber-400');
                 themeBtn.classList.add('text-gray-700');
 
@@ -2242,8 +2316,12 @@
                 // Window & Flood Lights OFF
                 windowLights.forEach(wl => wl.light.intensity = 0);
 
-                // Clear fireworks in day mode
+                // Clear fireworks & reset boost in day mode
                 clearMuseumFireworks();
+                if (isFireworkBoost) {
+                    isFireworkBoost = false;
+                    updateFireworkBoostButtonUI();
+                }
 
                 // UI Glass Light Mode
                 topCard.classList.replace('glass-panel-dark', 'glass-panel');
@@ -2270,12 +2348,52 @@
             // Theme toggle
             document.getElementById('theme-btn').addEventListener('click', toggleTheme);
 
-            // Labels visibility toggle
+            // Facility Navigation visibility toggle (with ON/OFF badge & detail card suppression)
             document.getElementById('labels-btn').addEventListener('click', () => {
                 showLabels = !showLabels;
                 const btn = document.getElementById('labels-btn');
-                btn.classList.toggle('text-blue-600', showLabels);
-                btn.classList.toggle('text-gray-400', !showLabels);
+                const statusBadge = document.getElementById('labels-status');
+
+                if (showLabels) {
+                    btn.className = 'flex items-center justify-between px-3 py-2 rounded-2xl bg-blue-600 text-white shadow-md hover:bg-blue-700 active:scale-95 transition border border-blue-400/40';
+                    if (statusBadge) {
+                        statusBadge.textContent = 'ON';
+                        statusBadge.className = 'text-[10px] font-black px-1.5 py-0.5 rounded-md bg-white/25 text-white ml-1';
+                    }
+                } else {
+                    btn.className = 'flex items-center justify-between px-3 py-2 rounded-2xl bg-gray-500/20 text-gray-500 shadow-inner hover:bg-gray-500/30 active:scale-95 transition border border-gray-400/30';
+                    if (statusBadge) {
+                        statusBadge.textContent = 'OFF';
+                        statusBadge.className = 'text-[10px] font-black px-1.5 py-0.5 rounded-md bg-gray-500/30 text-gray-500 ml-1';
+                    }
+                    // Hide facility explanation immediately when turned OFF
+                    hideDetailCard();
+                }
+            });
+
+            // Powerful Fireworks Boost toggle button
+            document.getElementById('firework-boost-btn').addEventListener('click', () => {
+                isFireworkBoost = !isFireworkBoost;
+
+                // Automatically switch to Night Mode if activated during Day Mode
+                if (isFireworkBoost && !isNight) {
+                    toggleTheme();
+                }
+
+                updateFireworkBoostButtonUI();
+
+                if (isFireworkBoost) {
+                    // Launch an immediate multi-shot starmine salvo in front of Kansai University Museum
+                    launchMuseumFirework(true, true);
+                    launchMuseumFirework(true, true);
+                    for (let k = 1; k <= 5; k++) {
+                        setTimeout(() => {
+                            if (isNight && isFireworkBoost) {
+                                launchMuseumFirework(k <= 2, true);
+                            }
+                        }, k * 110);
+                    }
+                }
             });
 
             // Compass reset
