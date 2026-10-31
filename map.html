@@ -1265,10 +1265,9 @@
                 libGrp.add(panel);
             }
 
-            // イノベーション創生センター (Directly attached to North-West corner of Library as in Apple Maps)
-            addSubBox(libGrp, -6, -24, 28, 15, 14, matWhite, 'innovation');
-            addSubBox(libGrp, 2, -33, 17, 19.5, 16, matWhite, 'innovation');
-            addSubBox(libGrp, -16, -31, 10, 13, 12, matWhite, 'innovation');
+            // イノベーション創生センター (West/North-West of Library, next to Yukyu no Niwa, leaving the NE street wide open for 11A-19B)
+            addSubBox(libGrp, -31, -4, 13, 16, 24, matWhite, 'innovation');
+            addSubBox(libGrp, -26, -12, 11, 18.5, 12, matWhite, 'innovation');
             scene.add(libGrp);
 
             // Starbucks Coffee Terrace (Between Innovation Center & Library North-East corner)
@@ -1486,9 +1485,9 @@
             addSubCyl(b2Grp, 0, 0, 14.5, 13, facGrey3, 'bldg2', matDarkRoof);
 
             // 第2学舎2号館 angled wings to the East along Senriyama Tunnel green belt
-            addSubBox(b2Grp, 28, 8, 15, 16, 46, matWhite, 'bldg2', -0.42);
-            addSubBox(b2Grp, 14, 22, 13, 14, 28, matWhite, 'bldg2', -0.42);
-            addSubBox(b2Grp, 18, -14, 24, 14, 12, matWhite, 'bldg2', -0.42);
+            addSubBox(b2Grp, 32, 8, 15, 16, 46, matWhite, 'bldg2', -0.42);
+            addSubBox(b2Grp, 22, 24, 13, 14, 26, matWhite, 'bldg2', -0.42);
+            addSubBox(b2Grp, 20, -14, 24, 14, 12, matWhite, 'bldg2', -0.42);
             addSubBox(b2Grp, -2, -28, 18, 12, 14, matWhite, 'bldg2', -0.42);
             scene.add(b2Grp);
 
@@ -1560,6 +1559,358 @@
                 clickableObjects.push(pillar);
                 scene.add(pillar);
             });
+
+            // -------------------------------------------------------------
+            // 12. 水色四角の小さなテント群 (図の通りの番号: 1A〜50B, 1〜3, 本部, 両替)
+            //     ＆ 赤い印の場所の小さなゴミ箱 (ゴミ①〜⑤・ゴミステーション)
+            // -------------------------------------------------------------
+            const tentPoleMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4, metalness: 0.5 });
+            const tentRoofWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 });
+            const cyanZoneFillMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.22, depthWrite: false });
+            const cyanZoneBorderMat = new THREE.MeshBasicMaterial({ color: 0x0ea5e9 });
+
+            // Helper: Create crisp floating number badge sprite for tents & trash bins (Always visible on top)
+            const makeLabelSprite = (text, bgHex = '#ffffff', borderHex = '#0284c7', textHex = '#0f172a', scaleW = 3.6, scaleH = 1.85) => {
+                const c = document.createElement('canvas');
+                c.width = 160;
+                c.height = 84;
+                const ctx = c.getContext('2d');
+
+                // Rounded pill background
+                const r = 18;
+                ctx.fillStyle = bgHex;
+                ctx.strokeStyle = borderHex;
+                ctx.lineWidth = 8;
+                ctx.beginPath();
+                ctx.roundRect(6, 6, 148, 72, r);
+                ctx.fill();
+                ctx.stroke();
+
+                // Crisp label text
+                ctx.fillStyle = textHex;
+                ctx.font = '900 42px "Inter", "Noto Sans JP", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, 80, 45);
+
+                const tex = new THREE.CanvasTexture(c);
+                tex.needsUpdate = true;
+                const sMat = new THREE.SpriteMaterial({
+                    map: tex,
+                    transparent: true,
+                    depthTest: false,
+                    depthWrite: false
+                });
+                const sprite = new THREE.Sprite(sMat);
+                sprite.scale.set(scaleW, scaleH, 1);
+                sprite.renderOrder = 999;
+                return sprite;
+            };
+
+            // Helper: Build a single small 3D festival tent with its assigned number
+            const addSmallTent = (parent, x, z, label, valanceHex = 0x38bdf8, badgeBg = '#fffbeb', ry = 0, w = 2.0, d = 2.0) => {
+                const tGrp = new THREE.Group();
+                tGrp.position.set(x, 0, z);
+                tGrp.rotation.y = ry;
+
+                // 4 Corner Legs
+                const hw = w * 0.44;
+                const hd = d * 0.44;
+                const legGeo = new THREE.BoxGeometry(0.12, 1.5, 0.12);
+                [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([lx, lz]) => {
+                    const leg = new THREE.Mesh(legGeo, tentPoleMat);
+                    leg.position.set(lx, 0.75, lz);
+                    tGrp.add(leg);
+                });
+
+                // Counter table inside booth
+                const counter = new THREE.Mesh(
+                    new THREE.BoxGeometry(w * 0.82, 0.7, d * 0.55),
+                    new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.7 })
+                );
+                counter.position.set(0, 0.35, 0);
+                tGrp.add(counter);
+
+                // Colored Valance Trim (Roof Eaves)
+                const valance = new THREE.Mesh(
+                    new THREE.BoxGeometry(w, 0.28, d),
+                    new THREE.MeshStandardMaterial({ color: valanceHex, roughness: 0.5 })
+                );
+                valance.position.y = 1.55;
+                valance.castShadow = true;
+                tGrp.add(valance);
+
+                // Pyramidal White Tent Canopy Roof
+                const pyrRadius = Math.max(w, d) * 0.71;
+                const roof = new THREE.Mesh(
+                    new THREE.ConeGeometry(pyrRadius, 0.85, 4),
+                    tentRoofWhiteMat
+                );
+                roof.rotation.y = Math.PI / 4;
+                roof.position.y = 2.1;
+                roof.castShadow = true;
+                tGrp.add(roof);
+
+                // Assigned Number Badge hovering right over the tent peak
+                const hexStr = '#' + valanceHex.toString(16).padStart(6, '0');
+                const badge = makeLabelSprite(label, badgeBg, hexStr, '#0f172a', 3.3, 1.72);
+                badge.position.y = 3.25;
+                tGrp.add(badge);
+
+                parent.add(tGrp);
+                return tGrp;
+            };
+
+            // Helper: Draw Light-Blue Rectangular Zone Frame (水色四角) on the ground
+            const addCyanZoneBox = (parent, cx, cz, w, d, ry = 0) => {
+                const zGrp = new THREE.Group();
+                zGrp.position.set(cx, 0.18, cz);
+                zGrp.rotation.y = ry;
+
+                const pad = new THREE.Mesh(new THREE.PlaneGeometry(w, d), cyanZoneFillMat);
+                pad.rotation.x = -Math.PI / 2;
+                zGrp.add(pad);
+
+                const bThick = 0.35;
+                const topB = new THREE.Mesh(new THREE.BoxGeometry(w + bThick, 0.12, bThick), cyanZoneBorderMat);
+                topB.position.set(0, 0.06, -d / 2);
+                const botB = new THREE.Mesh(new THREE.BoxGeometry(w + bThick, 0.12, bThick), cyanZoneBorderMat);
+                botB.position.set(0, 0.06, d / 2);
+                const leftB = new THREE.Mesh(new THREE.BoxGeometry(bThick, 0.12, d + bThick), cyanZoneBorderMat);
+                leftB.position.set(-w / 2, 0.06, 0);
+                const rightB = new THREE.Mesh(new THREE.BoxGeometry(bThick, 0.12, d + bThick), cyanZoneBorderMat);
+                rightB.position.set(w / 2, 0.06, 0);
+                zGrp.add(topB, botB, leftB, rightB);
+
+                parent.add(zGrp);
+            };
+
+            // Helper: Build a Small Trash Bin / Recycling Station at Red-Marked Spots (赤い印の小さなゴミ箱)
+            const addRedMarkedTrashBin = (parent, x, z, label = 'ゴミ箱', stationType = 'blue', ry = 0) => {
+                const binGrp = new THREE.Group();
+                binGrp.position.set(x, 0, z);
+                binGrp.rotation.y = ry;
+
+                // Base Station Pad (Green for ゴミ①〜⑤, Blue for ゴミステーション)
+                const padColor = stationType === 'green' ? 0x22c55e : 0x0284c7;
+                const basePad = new THREE.Mesh(
+                    new THREE.BoxGeometry(3.2, 0.18, 1.8),
+                    new THREE.MeshStandardMaterial({ color: padColor, roughness: 0.6 })
+                );
+                basePad.position.y = 0.09;
+                binGrp.add(basePad);
+
+                // Glowing Red Mark Ring / Star Indicator underneath (赤い印)
+                const redRing = new THREE.Mesh(
+                    new THREE.RingGeometry(1.15, 1.65, 24),
+                    new THREE.MeshBasicMaterial({ color: 0xef4444, side: THREE.DoubleSide })
+                );
+                redRing.rotation.x = -Math.PI / 2;
+                redRing.position.y = 0.2;
+                binGrp.add(redRing);
+
+                // 3 Small Segmented Trash / Recycling Bins (可燃=赤, 不燃=青, 資源/段ボール=緑)
+                const binColors = [0xef4444, 0x3b82f6, 0x10b981];
+                [-0.9, 0, 0.9].forEach((bx, idx) => {
+                    const bBody = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.72, 1.05, 0.72),
+                        new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 })
+                    );
+                    bBody.position.set(bx, 0.62, 0);
+                    bBody.castShadow = true;
+                    binGrp.add(bBody);
+
+                    // Colored recycling hood lid
+                    const bLid = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.78, 0.32, 0.78),
+                        new THREE.MeshStandardMaterial({ color: binColors[idx], roughness: 0.35 })
+                    );
+                    bLid.position.set(bx, 1.25, 0);
+                    bLid.castShadow = true;
+                    binGrp.add(bLid);
+                });
+
+                // Red-bordered label sprite above the trash bin
+                const sprite = makeLabelSprite(label, '#fef2f2', '#ef4444', '#b91c1c', 4.4, 2.05);
+                sprite.position.y = 2.85;
+                binGrp.add(sprite);
+
+                parent.add(binGrp);
+                return binGrp;
+            };
+
+            const festivalGrp = new THREE.Group();
+            scene.add(festivalGrp);
+
+            // -----------------------------------------------------------------
+            // [水色四角 1] 正門北側〜第二学舎西通路の東列: 本部 + 1A, 1B, 2A, 2B, 3A, 3B, 4A, 4B
+            // -----------------------------------------------------------------
+            addSmallTent(festivalGrp, 90.5, 65.5, '本部', 0xf59e0b, '#fef3c7', -0.1);
+            addCyanZoneBox(festivalGrp, 89.2, 47.0, 3.8, 30.5, -0.1);
+            const zone1List = [
+                { id: '1A', z: 60.2 }, { id: '1B', z: 57.4 },
+                { id: '2A', z: 52.2 }, { id: '2B', z: 49.4 },
+                { id: '3A', z: 46.6 }, { id: '3B', z: 43.8 },
+                { id: '4A', z: 37.8 }, { id: '4B', z: 35.0 }
+            ];
+            zone1List.forEach(item => {
+                const tx = 89.2 + (item.z - 47.0) * 0.1;
+                addSmallTent(festivalGrp, tx, item.z, item.id, 0xeab308, '#fefce8', -0.1);
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 2] 図書館東面沿いの列: 両替 + 5A, 5B, 6A, 6B, 7A, 7B, 8A, 8B
+            // -----------------------------------------------------------------
+            const zone2Ids = ['両替', '5A', '5B', '6A', '6B', '7A', '7B', '8A', '8B'];
+            addCyanZoneBox(festivalGrp, 80.5, 25.5, 3.8, 25.0, -0.22);
+            zone2Ids.forEach((id, idx) => {
+                const t = idx / (zone2Ids.length - 1); // 0 (bottom: 両替) -> 1 (top: 8B)
+                const tx = 83.0 - t * 5.0;
+                const tz = 36.3 - t * 21.6;
+                addSmallTent(festivalGrp, tx, tz, id, id === '両替' ? 0x0284c7 : 0xeab308, '#fefce8', -0.22);
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 3] 第二学舎前の4区画: 9A, 9B, 10A, 10B
+            // -----------------------------------------------------------------
+            const zone3Ids = ['9A', '9B', '10A', '10B'];
+            addCyanZoneBox(festivalGrp, 90.0, 9.0, 12.0, 3.8, 0.35);
+            zone3Ids.forEach((id, idx) => {
+                const t = (idx - 1.5) * 2.75;
+                const tx = 90.0 + t * Math.cos(0.35);
+                const tz = 9.0 - t * Math.sin(0.35);
+                addSmallTent(festivalGrp, tx, tz, id, 0xeab308, '#fefce8', 0.35);
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 4] 図書館北東面〜円神館(ITセンター)前の斜め列: 11A〜15B + [赤い印ゴミ箱] + 16A〜19B
+            // -----------------------------------------------------------------
+            const zone4Slots = [
+                '11A', '11B', '12A', '12B', '13A', '13B', '14A', '14B', '15A', '15B',
+                'TRASH',
+                '16A', '16B', '17A', '17B', '18A', '18B', '19A', '19B'
+            ];
+            const z4Start = { x: 70.0, z: 8.5 };
+            const z4End = { x: 24.0, z: -23.5 };
+            const z4Angle = Math.atan2(z4Start.z - z4End.z, z4End.x - z4Start.x);
+            addCyanZoneBox(
+                festivalGrp,
+                (z4Start.x + z4End.x) / 2,
+                (z4Start.z + z4End.z) / 2,
+                57.5,
+                3.8,
+                z4Angle
+            );
+            zone4Slots.forEach((slot, idx) => {
+                const frac = idx / (zone4Slots.length - 1);
+                const tx = z4Start.x + (z4End.x - z4Start.x) * frac;
+                const tz = z4Start.z + (z4End.z - z4Start.z) * frac;
+                if (slot === 'TRASH') {
+                    // 赤い印のゴミ箱 (15Bと16Aの間)
+                    addRedMarkedTrashBin(festivalGrp, tx, tz, 'ゴミ箱', 'blue', z4Angle);
+                } else {
+                    addSmallTent(festivalGrp, tx, tz, slot, 0x22c55e, '#f0fdf4', z4Angle, 1.9, 1.9);
+                }
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 5] 第四学舎の南面沿い: 25B, 25A, 24B, 24A, 23B, 23A, 22B, 22A, 21B, 21A, 20B, 20A
+            // -----------------------------------------------------------------
+            const zone5Ids = ['25B', '25A', '24B', '24A', '23B', '23A', '22B', '22A', '21B', '21A', '20B', '20A'];
+            addCyanZoneBox(b4Grp, 0, 22.8, 34.5, 3.8, 0);
+            zone5Ids.forEach((id, idx) => {
+                const lx = -15.4 + idx * 2.8;
+                addSmallTent(b4Grp, lx, 22.8, id, 0x06b6d4, '#ecfeff', 0, 1.9, 1.9);
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 6] 誠之館の北東面沿い (凜風館向かい): 3, 2, 1, [ゴミ], 32B〜26A
+            // -----------------------------------------------------------------
+            const zone6Slots = [
+                '3', '2', '1', 'TRASH_SEISHIN',
+                '32B', '32A', '31B', '31A', '30B', '30A', '29B', '29A', '28B', '28A', '27B', '27A', '26B', '26A'
+            ];
+            addCyanZoneBox(seishinGrp, 2, -14.8, 46.5, 3.6, 0);
+            zone6Slots.forEach((slot, idx) => {
+                const lx = -19.5 + idx * 2.52;
+                if (slot === 'TRASH_SEISHIN') {
+                    addRedMarkedTrashBin(seishinGrp, lx, -14.8, 'ゴミ箱', 'blue', 0);
+                } else {
+                    const isNumOnly = slot === '1' || slot === '2' || slot === '3';
+                    addSmallTent(
+                        seishinGrp,
+                        lx,
+                        -14.8,
+                        slot,
+                        isNumOnly ? 0xf97316 : 0xec4899,
+                        isNumOnly ? '#fff7ed' : '#fdf2f8',
+                        0,
+                        1.85,
+                        1.85
+                    );
+                }
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 7] 総合図書館横芝生 (尚文館の東側): 33A〜41B (上から下へ18張)
+            // -----------------------------------------------------------------
+            const zone7Ids = [
+                '33A', '33B', '34A', '34B', '35A', '35B', '36A', '36B', '37A', '37B',
+                '38A', '38B', '39A', '39B', '40A', '40B', '41A', '41B'
+            ];
+            addCyanZoneBox(shobunGrp, 14.5, 2.0, 3.8, 43.5, 0);
+            zone7Ids.forEach((id, idx) => {
+                const lz = -18.2 + idx * 2.38;
+                addSmallTent(shobunGrp, 14.5, lz, id, 0x14b8a6, '#f0fdfa', 0, 1.85, 1.85);
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 8] 尚文館の西面沿い (博物館側): 42A〜48B (上から下へ14張)
+            // -----------------------------------------------------------------
+            const zone8Ids = [
+                '42A', '42B', '43A', '43B', '44A', '44B', '45A', '45B',
+                '46A', '46B', '47A', '47B', '48A', '48B'
+            ];
+            addCyanZoneBox(shobunGrp, -14.8, 3.0, 3.8, 35.0, 0);
+            zone8Ids.forEach((id, idx) => {
+                const lz = -13.0 + idx * 2.46;
+                addSmallTent(shobunGrp, -14.8, lz, id, 0xd97706, '#fffbeb', 0, 1.85, 1.85);
+            });
+
+            // -----------------------------------------------------------------
+            // [水色四角 9 & 10] 博物館正面広場の2つの水色四角: (50B, 50A) と (49B, 49A)
+            // -----------------------------------------------------------------
+            // Upper light-blue box: 50B (top), 50A (bottom)
+            addCyanZoneBox(festivalGrp, -47.2, 12.0, 4.2, 6.4, 0.18);
+            addSmallTent(festivalGrp, -47.5, 10.6, '50B', 0xd97706, '#fffbeb', 0.18, 2.0, 2.0);
+            addSmallTent(festivalGrp, -46.9, 13.4, '50A', 0xd97706, '#fffbeb', 0.18, 2.0, 2.0);
+
+            // Lower light-blue box: 49B (top), 49A (bottom)
+            addCyanZoneBox(festivalGrp, -50.8, 24.5, 4.2, 6.4, -0.45);
+            addSmallTent(festivalGrp, -50.1, 23.2, '49B', 0xd97706, '#fffbeb', -0.45, 2.0, 2.0);
+            addSmallTent(festivalGrp, -51.5, 25.8, '49A', 0xd97706, '#fffbeb', -0.45, 2.0, 2.0);
+
+            // -----------------------------------------------------------------
+            // [赤い印の場所] 小さなゴミ箱・ゴミステーション配置 (全箇所)
+            // -----------------------------------------------------------------
+            // 1. ゴミ① (凜風館北側・第四学舎西側)
+            addRedMarkedTrashBin(festivalGrp, -12, -62, 'ゴミ①', 'green', -0.58);
+            // 2. イノベーション北側 (第四学舎20A南西・19B横の赤い印)
+            addRedMarkedTrashBin(festivalGrp, 21, -28, 'ゴミ箱', 'blue', -0.46);
+            // 3. ゴミ③ (円神館 / C棟円形ホールの北東側)
+            addRedMarkedTrashBin(festivalGrp, 92, -28, 'ゴミ③', 'green', -0.42);
+            // 4. 第二学舎西側 (9A南西・4B北の赤い印)
+            addRedMarkedTrashBin(festivalGrp, 85, 23.5, 'ゴミ箱', 'blue', -0.25);
+            // 5. ゴミ④ (右下・本部東側・南棟/チルコロ北側の赤い印)
+            addRedMarkedTrashBin(festivalGrp, 105, 65, 'ゴミ④', 'green', 0);
+            // 6. 総合図書館横芝生の南端 (41Bのすぐ下の赤い印)
+            addRedMarkedTrashBin(shobunGrp, 14.5, 26.2, 'ゴミ箱', 'blue', 0);
+            // 7. 博物館北東・誠之館南階段下の赤い印 (50Bの上側)
+            addRedMarkedTrashBin(festivalGrp, -45.5, 4.2, 'ゴミ箱', 'blue', -0.15);
+            // 8. ゴミ② (左下・あすかの庭/第1学舎南西側の赤い印)
+            addRedMarkedTrashBin(festivalGrp, -116, 84, 'ゴミ②', 'green', -0.15);
+            // 9. ゴミ⑤ (下中央左・博物館広場南/以文館西側の赤い印)
+            addRedMarkedTrashBin(festivalGrp, -64, 80, 'ゴミ⑤', 'green', -0.15);
 
             // -------------------------------------------------------------
             // 16. 中央グラウンド (Central Ground - 400mトラック & サッカー場)
