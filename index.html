@@ -1,0 +1,1978 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>関西大学 千里山キャンパス 3D MAP | Kansai Univ. 3D Campus</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Tween.js for smooth camera animations -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0d1522;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+
+        /* Apple Maps-like frosted glass */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(28px) saturate(200%);
+            -webkit-backdrop-filter: blur(28px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+        }
+
+        .glass-panel-dark {
+            background: rgba(22, 32, 51, 0.88);
+            backdrop-filter: blur(28px) saturate(200%);
+            -webkit-backdrop-filter: blur(28px) saturate(200%);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        /* POI Marker styling */
+        .poi-marker {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            cursor: pointer;
+            pointer-events: auto;
+            transition: transform 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            will-change: transform;
+        }
+
+        .poi-marker:hover {
+            transform: translate(-50%, -115%) scale(1.18);
+            z-index: 50 !important;
+        }
+
+        .poi-pin {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 0 2px rgba(255, 255, 255, 0.9);
+            transition: all 0.2s ease;
+        }
+
+        .poi-label {
+            position: absolute;
+            bottom: 34px;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            padding: 2.5px 7.5px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 700;
+            pointer-events: none;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+            transition: all 0.2s;
+        }
+
+        /* Hide scrollbars for clean UI */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Loading spinner */
+        .loader {
+            border: 3.5px solid rgba(255, 255, 255, 0.15);
+            border-radius: 50%;
+            border-top: 3.5px solid #3b82f6;
+            width: 42px;
+            height: 42px;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body class="theme-day">
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- POI Overlay Container (3D to 2D projected markers) -->
+    <div id="poi-container" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
+
+    <!-- UI Overlay: Top Navigation Bar -->
+    <div class="absolute top-4 left-4 right-4 md:right-auto md:w-96 z-30 pointer-events-none">
+        <div id="top-card" class="glass-panel rounded-3xl p-4 shadow-2xl pointer-events-auto transition-colors duration-500">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white shadow-md">
+                        <i data-lucide="map-pin" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h1 id="title-text" class="text-gray-900 font-extrabold text-base tracking-tight leading-none">関西大学 千里山キャンパス</h1>
+                        <p id="subtitle-text" class="text-gray-500 text-xs mt-1 font-medium">3D Apple Maps View</p>
+                    </div>
+                </div>
+
+                <!-- Day/Night Toggle & Info -->
+                <div class="flex items-center space-x-1">
+                    <button id="theme-btn" title="昼/夜モード切替 (写真1/写真2再現)" class="p-2.5 rounded-full hover:bg-black/5 active:scale-95 transition text-gray-700">
+                        <i id="theme-icon" data-lucide="moon" class="w-5 h-5"></i>
+                    </button>
+                    <button id="labels-btn" title="施設ラベル表示切替" class="p-2.5 rounded-full hover:bg-black/5 active:scale-95 transition text-blue-600">
+                        <i data-lucide="tag" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Search Bar -->
+            <div class="mt-3 relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                <input id="search-input" type="text" placeholder="施設・学舎・グラウンドを検索..." 
+                    class="w-full pl-9 pr-8 py-2 text-xs rounded-xl bg-gray-100/80 border border-transparent focus:border-blue-400 focus:bg-white focus:outline-none transition text-gray-800 placeholder-gray-400" />
+                <button id="clear-search-btn" class="hidden absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+
+                <!-- Search Results Dropdown -->
+                <div id="search-results" class="hidden absolute left-0 right-0 top-full mt-1.5 max-h-56 overflow-y-auto rounded-2xl glass-panel shadow-2xl p-1.5 z-40 space-y-1 text-xs">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UI Overlay: Right Control Stack (Apple Maps Style) -->
+    <div class="absolute top-4 right-4 z-30 flex flex-col space-y-2 pointer-events-auto">
+        <!-- Compass -->
+        <button id="compass-btn" title="方角を北に戻す" class="w-11 h-11 rounded-2xl glass-panel shadow-lg flex items-center justify-center text-gray-700 hover:scale-105 active:scale-95 transition">
+            <svg id="compass-arrow" class="w-5 h-5 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 19 21 12 17 5 21 12 2" fill="#ef4444" stroke="#ef4444" stroke-width="1.5" />
+            </svg>
+        </button>
+
+        <!-- 2D / 3D Toggle -->
+        <button id="dim-btn" title="2D俯瞰 / 3D視点切替" class="w-11 h-11 rounded-2xl glass-panel shadow-lg flex items-center justify-center font-bold text-xs text-gray-700 hover:scale-105 active:scale-95 transition">
+            3D
+        </button>
+
+        <!-- Zoom Controls -->
+        <div class="flex flex-col rounded-2xl glass-panel shadow-lg overflow-hidden border border-white/40">
+            <button id="zoom-in-btn" title="ズームイン" class="w-11 h-10 flex items-center justify-center text-gray-700 hover:bg-black/5 active:bg-black/10 transition border-b border-gray-200/50">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+            </button>
+            <button id="zoom-out-btn" title="ズームアウト" class="w-11 h-10 flex items-center justify-center text-gray-700 hover:bg-black/5 active:bg-black/10 transition">
+                <i data-lucide="minus" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <!-- Reset Full View -->
+        <button id="home-btn" title="キャンパス全景に戻す" class="w-11 h-11 rounded-2xl glass-panel shadow-lg flex items-center justify-center text-gray-700 hover:scale-105 active:scale-95 transition">
+            <i data-lucide="home" class="w-4 h-4"></i>
+        </button>
+    </div>
+
+    <!-- UI Overlay: Bottom Quick Category / Highlight Carousel -->
+    <div class="absolute bottom-5 left-4 right-4 z-30 pointer-events-none flex justify-center">
+        <div class="max-w-3xl w-full flex items-center space-x-2 overflow-x-auto no-scrollbar py-1 px-1 pointer-events-auto">
+            <button class="quick-pill active flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="all">
+                <i data-lucide="layers" class="w-3.5 h-3.5 text-blue-500"></i>
+                <span>全体俯瞰</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="gate">
+                <span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                <span>正門・時計塔</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="library">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                <span>総合図書館</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="museum">
+                <span class="w-2.5 h-2.5 rounded-full bg-pink-500"></span>
+                <span>関西大学博物館</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="symphony">
+                <span class="w-2.5 h-2.5 rounded-full bg-fuchsia-500"></span>
+                <span>KUシンフォニーホール</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="bldg4">
+                <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                <span>第4学舎 (理工系)</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="sports">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span>グラウンド・体育館</span>
+            </button>
+            <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="circolo">
+                <span class="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
+                <span>チルコロ (円神館)</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- UI Overlay: Facility Detail Card (Apple Maps Style) -->
+    <div id="detail-card" class="hidden absolute bottom-20 left-4 max-w-sm w-full z-40 pointer-events-auto transition-all duration-300 transform translate-y-4 opacity-0">
+        <div id="detail-panel" class="glass-panel rounded-3xl p-5 shadow-2xl relative border border-white/60">
+            <button id="close-detail-btn" class="absolute top-4 right-4 p-1.5 rounded-full hover:bg-black/5 active:scale-90 transition text-gray-400 hover:text-gray-700">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+            <div class="flex items-start space-x-3.5">
+                <div id="detail-icon-box" class="w-12 h-12 rounded-2xl flex-shrink-0 flex items-center justify-center text-white shadow-lg text-lg">
+                    <i id="detail-icon" data-lucide="building"></i>
+                </div>
+                <div class="pr-6">
+                    <span id="detail-category" class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 tracking-wider uppercase mb-1">
+                        Category
+                    </span>
+                    <h2 id="detail-title" class="text-gray-900 font-extrabold text-base leading-tight">施設名</h2>
+                    <p id="detail-subtitle" class="text-gray-400 text-xs font-medium">English Name</p>
+                </div>
+            </div>
+            <p id="detail-desc" class="text-gray-600 text-xs mt-3.5 leading-relaxed">
+                施設の詳細な説明が入ります。
+            </p>
+            <div id="detail-meta" class="mt-3.5 pt-3 border-t border-gray-200/60 flex items-center justify-between text-[11px] text-gray-500">
+                <span id="detail-hours">開館時間: 平日 8:30 - 21:00</span>
+                <button id="detail-zoom-btn" class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition active:scale-95 shadow-sm">
+                    近づく
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Screen -->
+    <div id="loading" class="fixed inset-0 bg-[#0d1522] z-50 flex flex-col items-center justify-center transition-opacity duration-500 pointer-events-none">
+        <div class="loader mb-4"></div>
+        <h2 class="text-white text-base font-bold tracking-wider">関西大学 千里山キャンパス 3D</h2>
+        <p class="text-gray-400 text-xs mt-1">建築モデル・テクスチャ・環境光を構築中...</p>
+    </div>
+
+    <!-- Three.js Module Import -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 1. POI & Campus Data Definition
+        // ==========================================
+        const POI_DATA = [
+            {
+                id: 'main-gate',
+                name: '関西大学-千里山キャンパス 正門',
+                nameEn: 'Main Gate',
+                category: '門・アプローチ',
+                color: '#475569',
+                icon: 'door-open',
+                pos: [55, 3, 95],
+                camPos: [55, 50, 160],
+                desc: '阪急電鉄千里線「関大前駅」から続く関大通りを上がった正面にある千里山キャンパスの表玄関。歴史あるレンガ門柱が学生と来訪者を迎えます。',
+                hours: '開門時間: 6:00 - 23:00'
+            },
+            {
+                id: 'clock-tower',
+                name: '関西大学 時計塔',
+                nameEn: 'Clock Tower',
+                category: 'ランドマーク',
+                color: '#3b82f6',
+                icon: 'clock',
+                pos: [42, 12, 78],
+                camPos: [42, 45, 130],
+                desc: '正門を入ってすぐ右手に建つ白い記念時計塔。キャンパスを象徴するモニュメントであり、学生たちの待ち合わせ場所として親しまれています。',
+                hours: '24時間ライトアップ'
+            },
+            {
+                id: 'clinic',
+                name: '関西大学第一診療所',
+                nameEn: 'First Clinic',
+                category: '医療・保健',
+                color: '#ef4444',
+                icon: 'activity',
+                pos: [65, 8, 75],
+                camPos: [65, 42, 130],
+                desc: '学生・教職員のための総合診療所。内科・歯科等の診療や定期健康診断を行い、安心・安全なキャンパスライフを健康面から支えています。',
+                hours: '平日 9:00 - 17:00'
+            },
+            {
+                id: 'circolo',
+                name: 'レストラン チルコロ (円神館)',
+                nameEn: 'Restaurant Circolo',
+                category: 'カフェ・レストラン',
+                color: '#f97316',
+                icon: 'utensils',
+                pos: [105, 8, 80],
+                camPos: [105, 45, 140],
+                desc: '正門東側の象徴的な円形建築「円神館」にあるスタイリッシュなイタリアンレストラン。本格的なパスタやピッツァ、カフェメニューを提供しています。',
+                hours: '11:00 - 20:00 (日曜定休)'
+            },
+            {
+                id: 'library',
+                name: '関西大学 総合図書館',
+                nameEn: 'General Library',
+                category: '図書館・学習支援',
+                color: '#d97706',
+                icon: 'book-open',
+                pos: [55, 14, 10],
+                camPos: [55, 75, 90],
+                desc: '蔵書数200万冊以上を誇る西日本有数の学術情報拠点。大階段、屋上の大型ソーラーパネル、充実したラーニングコモンズ、スターバックスを備えます。',
+                hours: '開館時間: 8:50 - 22:00'
+            },
+            {
+                id: 'starbucks',
+                name: 'スターバックス 関西大学千里山店',
+                nameEn: 'Starbucks Coffee',
+                category: 'カフェ',
+                color: '#059669',
+                icon: 'coffee',
+                pos: [35, 3, 18],
+                camPos: [35, 30, 55],
+                desc: '総合図書館前のオープンテラスに面した大人気カフェ。悠久の庭の芝生や新緑を眺めながらコーヒーを楽しめる憩いの場です。',
+                hours: '8:00 - 20:00'
+            },
+            {
+                id: 'yukyu',
+                name: '悠久の庭 (芝生広場)',
+                nameEn: 'Yukyu no Niwa (Central Lawn)',
+                category: '広場・緑地',
+                color: '#16a34a',
+                icon: 'trees',
+                pos: [0, 2, 10],
+                camPos: [0, 60, 85],
+                desc: '千里山キャンパスのへそ（中央）に広がる広大な芝生広場。春の桜や新緑が美しく、学生たちが集い語り合うキャンパスの象徴的オアシスです。',
+                hours: '常時開放'
+            },
+            {
+                id: 'shobunkan',
+                name: '尚文館',
+                nameEn: 'Shobunkan',
+                category: '大学院・研究棟',
+                color: '#6366f1',
+                icon: 'graduation-cap',
+                pos: [-30, 12, 20],
+                camPos: [-30, 50, 75],
+                desc: '大学院および法科大学院（ロースクール）の拠点。赤レンガの風格あるボディに、半円筒かまぼこ型のシルバーヴォールト屋根が特徴的な名建築です。',
+                hours: '8:30 - 22:00'
+            },
+            {
+                id: 'ibunkan',
+                name: '以文館',
+                nameEn: 'Ibunkan',
+                category: '文学部棟',
+                color: '#6366f1',
+                icon: 'graduation-cap',
+                pos: [-30, 12, 65],
+                camPos: [-30, 55, 125],
+                desc: '文学部が学ぶ伝統の校舎。東西に長く伸びる壮大な赤レンガファサード、両端にそびえる2基の円筒ドーム塔、屋根中央の天窓が優美です。',
+                hours: '8:30 - 21:00'
+            },
+            {
+                id: 'iwasaki',
+                name: '関西大学 岩崎記念館',
+                nameEn: 'Iwasaki Memorial Hall',
+                category: '講義・記念棟',
+                color: '#6366f1',
+                icon: 'landmark',
+                pos: [-55, 10, 95],
+                camPos: [-55, 50, 150],
+                desc: '正門からのアプローチ道に面した重厚な学舎。大講義室やマルチメディア設備、研究施設が整っています。',
+                hours: '8:30 - 21:00'
+            },
+            {
+                id: 'museum',
+                name: '関西大学博物館 (簡文館)',
+                nameEn: 'Kansai University Museum',
+                category: '博物館・有形文化財',
+                color: '#ec4899',
+                icon: 'landmark',
+                pos: [-75, 14, 15],
+                camPos: [-75, 55, 75],
+                desc: '日本近代建築の巨匠・村野藤吾の代表作。優美なエメラルドグリーンの緑青銅板ドームと円形ロビー、扇状ウィングが調和する国登録有形文化財。',
+                hours: '10:00 - 16:00 (日曜・祝日休館)'
+            },
+            {
+                id: 'bldg1',
+                name: '第1学舎 (法学部棟群)',
+                nameEn: '1st Building Complex (Law)',
+                category: '法学部棟',
+                color: '#6366f1',
+                icon: 'graduation-cap',
+                pos: [-115, 12, 55],
+                camPos: [-115, 60, 120],
+                desc: '関西大学の源流である法学部の学舎群。中庭を囲む赤レンガ造りの1号館や3号館C棟などが風格ある佇まいを見せています。',
+                hours: '8:30 - 21:00'
+            },
+            {
+                id: 'symphony',
+                name: 'KUシンフォニーホール',
+                nameEn: 'KU Symphony Hall',
+                category: '文化・ホール',
+                color: '#d946ef',
+                icon: 'music',
+                pos: [-15, 10, -30],
+                camPos: [-15, 55, 25],
+                desc: '音響効果を追求した大ホール。赤レンガの曲線ファサードと、屋上全体が階段状の緑の芝生テラスになっている屋上緑化建築が圧巻です。',
+                hours: 'イベント開催時開館'
+            },
+            {
+                id: 'dinoa',
+                name: 'ダイニングホール・ディノア',
+                nameEn: 'Dining Hall Dinore',
+                category: '学食・カフェテリア',
+                color: '#f97316',
+                icon: 'utensils',
+                pos: [-5, 8, -35],
+                camPos: [-5, 40, 18],
+                desc: 'シンフォニーホール隣接の大食堂。明るく広々とした空間で、学生たちのランチや語らいの場として賑わっています。',
+                hours: '11:00 - 15:00'
+            },
+            {
+                id: 'seishinkan',
+                name: '誠之館',
+                nameEn: 'Seishinkan',
+                category: '学生会館・部室棟',
+                color: '#0284c7',
+                icon: 'users',
+                pos: [-60, 10, -25],
+                camPos: [-60, 50, 30],
+                desc: '文化系・体育系サークルの部室や多目的ホールが集まる学生自治・課外活動の拠点。1〜4号館で構成されています。',
+                hours: '9:00 - 21:00'
+            },
+            {
+                id: 'bldg4',
+                name: '第4学舎 (理工系学部棟群)',
+                nameEn: '4th Building (Science & Tech)',
+                category: '理工系学部棟',
+                color: '#6366f1',
+                icon: 'graduation-cap',
+                pos: [25, 16, -80],
+                camPos: [25, 75, -20],
+                desc: 'システム理工学部・環境都市工学部・化学生命工学部の拠点。白を基調としたモダンな高層棟群、先進の研究実験室、渡り廊下が幾何学的に配置。',
+                hours: '8:30 - 21:30'
+            },
+            {
+                id: 'innovation',
+                name: 'イノベーション創生センター / 知財センター',
+                nameEn: 'Innovation Center',
+                category: '産官学連携・研究',
+                color: '#8b5cf6',
+                icon: 'sparkles',
+                pos: [40, 10, -25],
+                camPos: [40, 48, 28],
+                desc: '産官学連携と先端テクノロジーの社会実装を推進するオープンイノベーション拠点。研究者や企業が活発に交流しています。',
+                hours: '平日 9:00 - 17:00'
+            },
+            {
+                id: 'bldg2',
+                name: '第2学舎 (経済・商学部) / C棟食堂',
+                nameEn: '2nd Building Complex',
+                category: '経済・商学部棟',
+                color: '#6366f1',
+                icon: 'graduation-cap',
+                pos: [110, 12, -10],
+                camPos: [110, 65, 55],
+                desc: '経済学部・商学部の学舎群。東側の丘陵に沿って長大に連なり、キャンパス最大規模の座席数を誇る第2学舎C棟食堂が隣接します。',
+                hours: '8:30 - 21:00'
+            },
+            {
+                id: 'kokusai',
+                name: '関西大学国際部',
+                nameEn: 'Division of International Affairs',
+                category: '国際交流施設',
+                color: '#0ea5e9',
+                icon: 'globe',
+                pos: [120, 10, 45],
+                camPos: [120, 48, 98],
+                desc: '留学生サポートやグローバル教育の拠点。屋上に輝く円形ガラスドームが美しい近代建築です。',
+                hours: '平日 9:00 - 17:00'
+            },
+            {
+                id: 'gym-central',
+                name: '中央体育館',
+                nameEn: 'Central Gymnasium',
+                category: 'スポーツ施設',
+                color: '#10b981',
+                icon: 'trophy',
+                pos: [-130, 12, -20],
+                camPos: [-130, 65, 45],
+                desc: '巨大な白いヴォールト・アーチ型屋根を持つキャンパス最大のメインアリーナ。各種公式球技大会や式典が行われます。',
+                hours: '8:30 - 21:00'
+            },
+            {
+                id: 'gym-east',
+                name: '東体育館 (屋上テニスコート)',
+                nameEn: 'East Gymnasium',
+                category: 'スポーツ施設',
+                color: '#10b981',
+                icon: 'activity',
+                pos: [-65, 12, -75],
+                camPos: [-65, 60, -15],
+                desc: '屋内競技場の上に、青と緑の全天候型テニスコートを配置した立体型スポーツ施設。防球ネットに囲まれた屋上で学生が練習に励みます。',
+                hours: '8:30 - 21:00'
+            },
+            {
+                id: 'ground-central',
+                name: '中央グラウンド',
+                nameEn: 'Central Athletic Field',
+                category: '陸上・競技場',
+                color: '#10b981',
+                icon: 'zap',
+                pos: [-30, 2, -125],
+                camPos: [-30, 75, -55],
+                desc: '鮮やかな赤い全天候型400m陸上トラックと、内側に人工芝サッカー・アメフトフィールドを備えた総合グラウンド。ナイター照明完備。',
+                hours: '利用許可制'
+            },
+            {
+                id: 'ground-north',
+                name: '関西大学 北グラウンド (野球場)',
+                nameEn: 'North Ground (Baseball Field)',
+                category: '野球場',
+                color: '#10b981',
+                icon: 'shield',
+                pos: [-105, 2, -150],
+                camPos: [-105, 75, -85],
+                desc: '伝統の関西大学野球部が汗を流す本格的扇型野球グラウンド。内野黒土、外野天然芝、フェンス、バックネットを備えます。',
+                hours: '部活動・公認団体専用'
+            },
+            {
+                id: 'meishin',
+                name: '名神高速道路 & 千里山トンネル',
+                nameEn: 'Meishin Expressway & Tunnel',
+                category: '交通インフラ',
+                color: '#475569',
+                icon: 'navigation',
+                pos: [110, 6, -185],
+                camPos: [110, 58, -125],
+                desc: 'キャンパス北東部を走る日本の大動脈・名神高速道路。丘陵を貫く千里山トンネルの坑口をキャンパスから一望できます。ミニカーが走行中。',
+                hours: '24時間通行'
+            }
+        ];
+
+        // ==========================================
+        // 2. Global State & App Variables
+        // ==========================================
+        let scene, camera, renderer, controls;
+        let isNight = false;
+        let is3D = true;
+        let showLabels = true;
+        let selectedPoiId = null;
+
+        // Dynamic Lighting & Materials References
+        let ambientLight, sunLight, moonLight;
+        let cityGround, campusGround;
+        let dayMaterials = [], nightMaterials = [];
+        let windowLights = [];
+        let cars = []; // Expressway traffic animation
+        let poiElements = [];
+        const clickableObjects = [];
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Color Palettes
+        // Photo 1: Deep Navy/Slate Apple Maps 3D mode
+        // Photo 2: Bright Photoreal Satellite view
+        const PALETTE = {
+            day: {
+                bg: 0xdde7ef,
+                fog: 0xdde7ef,
+                ground: 0xb5bcc4,
+                campusPaving: 0xccd3da,
+                brick: 0x9b4d3c,
+                brickLight: 0xb35d49,
+                whiteWall: 0xe8ecef,
+                greyWall: 0xb8c0c8,
+                darkRoof: 0x4d535a,
+                domeGreen: 0x3d7b62,
+                greenRoof: 0x517f44,
+                grass: 0x5a9147,
+                turf: 0x487937,
+                trackRed: 0xb44837,
+                expressway: 0x5a6974
+            },
+            night: {
+                bg: 0x182030,
+                fog: 0x182030,
+                ground: 0x1c2536,
+                campusPaving: 0x222e42,
+                brick: 0x3b4a62,
+                brickLight: 0x465773,
+                whiteWall: 0x4a5d7c,
+                greyWall: 0x3e4e68,
+                darkRoof: 0x283448,
+                domeGreen: 0x2b5c52,
+                greenRoof: 0x2b4c38,
+                grass: 0x1e3528,
+                turf: 0x193024,
+                trackRed: 0x452a30,
+                expressway: 0x243247
+            }
+        };
+
+        // ==========================================
+        // 3. Procedural Texture Generators
+        // ==========================================
+        function createTrackTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#b44837';
+            ctx.fillRect(0, 0, 1024, 1024);
+
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            const cx = 512, cy = 512;
+            const rw = 400, rh = 280;
+
+            for (let i = 0; i < 6; i++) {
+                const w = rw - i * 16;
+                const h = rh - i * 16;
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, w, h, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = '#487937';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, rw - 96, rh - 96, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(cx - 200, cy - 120, 400, 240);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - 120);
+            ctx.lineTo(cx, cy + 120);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 45, 0, Math.PI * 2);
+            ctx.stroke();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createBaseballTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#4a7f3c';
+            ctx.fillRect(0, 0, 512, 512);
+
+            ctx.fillStyle = '#aa8055';
+            ctx.beginPath();
+            ctx.moveTo(256, 450);
+            ctx.arc(256, 450, 280, -Math.PI * 0.85, -Math.PI * 0.15);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#4a7f3c';
+            ctx.beginPath();
+            ctx.moveTo(256, 380);
+            ctx.lineTo(190, 310);
+            ctx.lineTo(256, 240);
+            ctx.lineTo(322, 310);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#b5885c';
+            ctx.beginPath();
+            ctx.arc(256, 310, 16, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(256, 450);
+            ctx.lineTo(40, 150);
+            ctx.moveTo(256, 450);
+            ctx.lineTo(472, 150);
+            ctx.stroke();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createSolarTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#111a28';
+            ctx.fillRect(0, 0, 256, 256);
+
+            ctx.strokeStyle = '#224068';
+            ctx.lineWidth = 2;
+            for (let x = 0; x < 256; x += 16) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+            }
+            for (let y = 0; y < 256; y += 32) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(256, y); ctx.stroke();
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createTennisTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#3f7c46';
+            ctx.fillRect(0, 0, 512, 256);
+
+            for (let c = 0; c < 2; c++) {
+                const ox = 20 + c * 245;
+                ctx.fillStyle = '#2d5b88';
+                ctx.fillRect(ox, 25, 220, 206);
+
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(ox, 25, 220, 206);
+
+                ctx.strokeRect(ox + 45, 45, 130, 166);
+                ctx.beginPath();
+                ctx.moveTo(ox + 110, 45); ctx.lineTo(ox + 110, 211);
+                ctx.stroke();
+
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(ox + 110, 15); ctx.lineTo(ox + 110, 241);
+                ctx.stroke();
+            }
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // ==========================================
+        // 4. Initialization
+        // ==========================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // 1. Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(PALETTE.day.bg);
+            scene.fog = new THREE.FogExp2(PALETTE.day.fog, 0.0016);
+
+            // 2. Camera
+            camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 1, 1200);
+            camera.position.set(0, 175, 240);
+
+            // 3. Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.05;
+            container.appendChild(renderer.domElement);
+
+            // 4. Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.maxPolarAngle = Math.PI / 2.15;
+            controls.minDistance = 25;
+            controls.maxDistance = 420;
+            controls.target.set(0, 5, 0);
+
+            // 5. Lighting Setup
+            setupLighting();
+
+            // 6. Build World Geometry
+            buildCampus();
+
+            // 7. Setup POI Markers
+            createPoiMarkers();
+
+            // 8. Event Listeners & UI Binding
+            setupUI();
+
+            // Smoothly remove loading screen
+            setTimeout(() => {
+                const loader = document.getElementById('loading');
+                if (loader) {
+                    loader.style.opacity = '0';
+                    setTimeout(() => loader.style.display = 'none', 600);
+                }
+            }, 300);
+
+            // Window resize
+            window.addEventListener('resize', onWindowResize);
+
+            // Raycasting for direct building click
+            renderer.domElement.addEventListener('pointerup', onPointerClick);
+
+            // Render loop
+            animate();
+        }
+
+        // ==========================================
+        // 5. Lighting Setup
+        // ==========================================
+        function setupLighting() {
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.72);
+            scene.add(ambientLight);
+
+            // Sun (Day Light)
+            sunLight = new THREE.DirectionalLight(0xfff6e8, 1.15);
+            sunLight.position.set(-120, 240, 130);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 4096;
+            sunLight.shadow.mapSize.height = 4096;
+            sunLight.shadow.camera.near = 20;
+            sunLight.shadow.camera.far = 700;
+            const d = 260;
+            sunLight.shadow.camera.left = -d;
+            sunLight.shadow.camera.right = d;
+            sunLight.shadow.camera.top = d;
+            sunLight.shadow.camera.bottom = -d;
+            sunLight.shadow.bias = -0.0004;
+            scene.add(sunLight);
+
+            // Moon Light (for Night Mode - photo 1 slate blue lighting)
+            moonLight = new THREE.DirectionalLight(0x9fb6dc, 0);
+            moonLight.position.set(-80, 220, 120);
+            moonLight.castShadow = true;
+            moonLight.shadow.mapSize.width = 2048;
+            moonLight.shadow.mapSize.height = 2048;
+            moonLight.shadow.camera.near = 20;
+            moonLight.shadow.camera.far = 700;
+            moonLight.shadow.camera.left = -d;
+            moonLight.shadow.camera.right = d;
+            moonLight.shadow.camera.top = d;
+            moonLight.shadow.camera.bottom = -d;
+            scene.add(moonLight);
+        }
+
+        // Helper to register material for day/night sync
+        function registerMat(material, dayColor, nightColor, dayRough = 0.7, nightRough = 0.6) {
+            material.color.setHex(dayColor);
+            material.roughness = dayRough;
+            material.userData = { dayColor, nightColor, dayRough, nightRough };
+            dayMaterials.push(material);
+            return material;
+        }
+
+        // ==========================================
+        // 6. Campus 3D Construction
+        // ==========================================
+        function buildCampus() {
+            // --- Grounds & Road Bases ---
+            const matCityGround = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.ground, PALETTE.night.ground, 0.9, 0.8);
+            cityGround = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), matCityGround);
+            cityGround.rotation.x = -Math.PI / 2;
+            cityGround.receiveShadow = true;
+            scene.add(cityGround);
+
+            // Campus Main Paving Area
+            const matCampusPaving = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.campusPaving, PALETTE.night.campusPaving, 0.8, 0.7);
+            campusGround = new THREE.Mesh(new THREE.PlaneGeometry(360, 310), matCampusPaving);
+            campusGround.rotation.x = -Math.PI / 2;
+            campusGround.position.set(-5, 0.08, -10);
+            campusGround.receiveShadow = true;
+            scene.add(campusGround);
+
+            // Turf & Grass helper
+            const addGrass = (x, z, w, d, isTurf = false, ry = 0) => {
+                const dayCol = isTurf ? PALETTE.day.turf : PALETTE.day.grass;
+                const nightCol = isTurf ? PALETTE.night.turf : PALETTE.night.grass;
+                const mat = registerMat(new THREE.MeshStandardMaterial({ flatShading: true }), dayCol, nightCol, 0.95, 0.9);
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.rotation.z = ry;
+                mesh.position.set(x, 0.14, z);
+                mesh.receiveShadow = true;
+                scene.add(mesh);
+                return mesh;
+            };
+
+            // Main Green Spaces
+            addGrass(0, 10, 52, 42, false);        // 悠久の庭 (Central Lawn)
+            addGrass(-75, 25, 45, 30, false);      // 博物館前広場
+            addGrass(-30, 42, 60, 20, false);      // 尚文館〜以文館間
+            addGrass(90, 25, 55, 110, false, 0.1); // 東側斜面緑地
+            addGrass(10, 48, 55, 25, false);       // 図書館南側緑地
+            addGrass(-10, -55, 45, 25, true);      // シンフォニーホール北側
+
+            // Common Materials
+            const matBrick = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.brick, PALETTE.night.brick);
+            const matBrickLight = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.brickLight, PALETTE.night.brickLight);
+            const matWhite = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.whiteWall, PALETTE.night.whiteWall);
+            const matGrey = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.greyWall, PALETTE.night.greyWall);
+            const matDarkRoof = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.darkRoof, PALETTE.night.darkRoof);
+            const matDomeGreen = registerMat(new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.1 }), PALETTE.day.domeGreen, PALETTE.night.domeGreen);
+            const matRoofGreen = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.greenRoof, PALETTE.night.greenRoof);
+
+            // Generic Building Creator with Raycast binding
+            const createBoxBuilding = (x, z, w, h, d, ry, bodyMat, roofMat = matDarkRoof, roofOverhang = 0.4, poiId = null) => {
+                const group = new THREE.Group();
+                group.position.set(x, 0, z);
+                group.rotation.y = ry;
+
+                const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+                body.position.y = h / 2;
+                body.castShadow = true; body.receiveShadow = true;
+                if (poiId) {
+                    body.userData.poiId = poiId;
+                    clickableObjects.push(body);
+                }
+                group.add(body);
+
+                if (roofMat) {
+                    const roof = new THREE.Mesh(new THREE.BoxGeometry(w + roofOverhang, 0.6, d + roofOverhang), roofMat);
+                    roof.position.y = h + 0.3;
+                    roof.castShadow = true;
+                    if (poiId) {
+                        roof.userData.poiId = poiId;
+                        clickableObjects.push(roof);
+                    }
+                    group.add(roof);
+                }
+
+                scene.add(group);
+                return group;
+            };
+
+            // -------------------------------------------------------------
+            // 1. 関西大学 総合図書館 (General Library) - 赤レンガ＋ソーラーパネル
+            // -------------------------------------------------------------
+            const libGrp = new THREE.Group();
+            libGrp.position.set(55, 0, 10);
+            const libMain = new THREE.Mesh(new THREE.BoxGeometry(56, 17, 38), matBrickLight);
+            libMain.position.y = 8.5;
+            libMain.castShadow = true; libMain.receiveShadow = true;
+            libMain.userData.poiId = 'library';
+            clickableObjects.push(libMain);
+            libGrp.add(libMain);
+
+            const libRoof = new THREE.Mesh(new THREE.BoxGeometry(57, 1.2, 39), matGrey);
+            libRoof.position.y = 17.6;
+            libRoof.castShadow = true;
+            libRoof.userData.poiId = 'library';
+            clickableObjects.push(libRoof);
+            libGrp.add(libRoof);
+
+            const solarTex = createSolarTexture();
+            solarTex.wrapS = THREE.RepeatWrapping;
+            solarTex.wrapT = THREE.RepeatWrapping;
+            solarTex.repeat.set(8, 1);
+            const matSolar = new THREE.MeshStandardMaterial({ map: solarTex, roughness: 0.2, metalness: 0.8 });
+            for (let i = 0; i < 2; i++) {
+                const panel = new THREE.Mesh(new THREE.BoxGeometry(48, 0.4, 11), matSolar);
+                panel.position.set(0, 18.4, -9 + i * 18);
+                panel.rotation.x = 0.05;
+                panel.castShadow = true;
+                panel.userData.poiId = 'library';
+                clickableObjects.push(panel);
+                libGrp.add(panel);
+            }
+
+            const stairs = new THREE.Mesh(new THREE.BoxGeometry(22, 2.5, 14), matGrey);
+            stairs.position.set(-20, 1.25, 0);
+            stairs.castShadow = true; stairs.receiveShadow = true;
+            libGrp.add(stairs);
+            scene.add(libGrp);
+
+            // Starbucks Coffee Terrace
+            const sbuxGrp = new THREE.Group();
+            sbuxGrp.position.set(35, 0, 18);
+            const sbuxDeck = new THREE.Mesh(new THREE.BoxGeometry(14, 0.4, 10), new THREE.MeshStandardMaterial({ color: 0x8a6d4b }));
+            sbuxDeck.position.y = 0.2;
+            sbuxDeck.userData.poiId = 'starbucks';
+            clickableObjects.push(sbuxDeck);
+            sbuxGrp.add(sbuxDeck);
+
+            const umbrellaMat = new THREE.MeshStandardMaterial({ color: 0x059669 });
+            const poleMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            for (let i = 0; i < 2; i++) {
+                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2.8, 8), poleMat);
+                pole.position.set(-3 + i * 6, 1.4, 0);
+                sbuxGrp.add(pole);
+                const top = new THREE.Mesh(new THREE.ConeGeometry(2, 0.8, 12), umbrellaMat);
+                top.position.set(-3 + i * 6, 2.8, 0);
+                top.castShadow = true;
+                top.userData.poiId = 'starbucks';
+                clickableObjects.push(top);
+                sbuxGrp.add(top);
+            }
+            scene.add(sbuxGrp);
+
+            // -------------------------------------------------------------
+            // 2. 関西大学博物館 (簡文館) - 村野藤吾設計の緑青ドーム
+            // -------------------------------------------------------------
+            const musGrp = new THREE.Group();
+            musGrp.position.set(-75, 0, 15);
+            const musCenter = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 13, 36), matBrick);
+            musCenter.position.y = 6.5;
+            musCenter.castShadow = true; musCenter.receiveShadow = true;
+            musCenter.userData.poiId = 'museum';
+            clickableObjects.push(musCenter);
+            musGrp.add(musCenter);
+
+            const musDome = new THREE.Mesh(new THREE.SphereGeometry(10.8, 36, 18, 0, Math.PI * 2, 0, Math.PI / 2), matDomeGreen);
+            musDome.position.y = 13;
+            musDome.castShadow = true;
+            musDome.userData.poiId = 'museum';
+            clickableObjects.push(musDome);
+            musGrp.add(musDome);
+
+            const musSpire = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.8, 3.5, 12), matDomeGreen);
+            musSpire.position.y = 24.5;
+            musGrp.add(musSpire);
+
+            const wing1 = new THREE.Mesh(new THREE.BoxGeometry(32, 10, 14), matBrick);
+            wing1.position.set(10, 5, -8);
+            wing1.rotation.y = -Math.PI / 6;
+            wing1.castShadow = true; wing1.receiveShadow = true;
+            wing1.userData.poiId = 'museum';
+            clickableObjects.push(wing1);
+            musGrp.add(wing1);
+
+            const wing2 = new THREE.Mesh(new THREE.BoxGeometry(32, 10, 14), matBrick);
+            wing2.position.set(-10, 5, -8);
+            wing2.rotation.y = Math.PI / 6;
+            wing2.castShadow = true; wing2.receiveShadow = true;
+            wing2.userData.poiId = 'museum';
+            clickableObjects.push(wing2);
+            musGrp.add(wing2);
+            scene.add(musGrp);
+
+            // -------------------------------------------------------------
+            // 3. 尚文館 (Shobunkan) - 半円筒かまぼこ型ヴォールト屋根
+            // -------------------------------------------------------------
+            const shobunGrp = new THREE.Group();
+            shobunGrp.position.set(-30, 0, 20);
+            const shobunBody = new THREE.Mesh(new THREE.BoxGeometry(22, 15, 32), matBrickLight);
+            shobunBody.position.y = 7.5;
+            shobunBody.castShadow = true; shobunBody.receiveShadow = true;
+            shobunBody.userData.poiId = 'shobunkan';
+            clickableObjects.push(shobunBody);
+            shobunGrp.add(shobunBody);
+
+            const shobunRoof = new THREE.Mesh(
+                new THREE.CylinderGeometry(11, 11, 32.2, 32, 1, false, 0, Math.PI),
+                matGrey
+            );
+            shobunRoof.rotation.z = Math.PI / 2;
+            shobunRoof.position.set(0, 15, 0);
+            shobunRoof.castShadow = true;
+            shobunRoof.userData.poiId = 'shobunkan';
+            clickableObjects.push(shobunRoof);
+            shobunGrp.add(shobunRoof);
+            scene.add(shobunGrp);
+
+            // -------------------------------------------------------------
+            // 4. 以文館 (Ibunkan) - 横長赤レンガ大校舎＋両端の円筒ドーム塔
+            // -------------------------------------------------------------
+            const ibunGrp = new THREE.Group();
+            ibunGrp.position.set(-30, 0, 65);
+            const ibunBody = new THREE.Mesh(new THREE.BoxGeometry(85, 15, 18), matBrick);
+            ibunBody.position.y = 7.5;
+            ibunBody.castShadow = true; ibunBody.receiveShadow = true;
+            ibunBody.userData.poiId = 'ibunkan';
+            clickableObjects.push(ibunBody);
+            ibunGrp.add(ibunBody);
+
+            const ibunRoof = new THREE.Mesh(new THREE.BoxGeometry(86, 0.8, 19), matGrey);
+            ibunRoof.position.y = 15.4;
+            ibunRoof.castShadow = true;
+            ibunRoof.userData.poiId = 'ibunkan';
+            clickableObjects.push(ibunRoof);
+            ibunGrp.add(ibunRoof);
+
+            [-41, 41].forEach(tx => {
+                const tower = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 7, 24), matBrick);
+                tower.position.set(tx, 18.5, 0);
+                tower.castShadow = true;
+                tower.userData.poiId = 'ibunkan';
+                clickableObjects.push(tower);
+                ibunGrp.add(tower);
+
+                const tDome = new THREE.Mesh(new THREE.SphereGeometry(4.5, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), matDomeGreen);
+                tDome.position.set(tx, 22, 0);
+                tDome.castShadow = true;
+                tower.userData.poiId = 'ibunkan';
+                clickableObjects.push(tDome);
+                ibunGrp.add(tDome);
+            });
+
+            const skyLight = new THREE.Mesh(new THREE.BoxGeometry(24, 1.8, 10), new THREE.MeshStandardMaterial({ color: 0x4a6572, roughness: 0.1, metalness: 0.5 }));
+            skyLight.position.set(0, 16.2, 0);
+            ibunGrp.add(skyLight);
+            scene.add(ibunGrp);
+
+            // -------------------------------------------------------------
+            // 5. 岩崎記念館 (Iwasaki Memorial Hall)
+            // -------------------------------------------------------------
+            createBoxBuilding(-55, 95, 65, 15, 18, 0, matBrick, matGrey, 0.4, 'iwasaki');
+
+            // -------------------------------------------------------------
+            // 6. KUシンフォニーホール & ディノア - 扇状カーブ＋屋上緑化テラス
+            // -------------------------------------------------------------
+            const symGrp = new THREE.Group();
+            symGrp.position.set(-15, 0, -30);
+            symGrp.rotation.y = -Math.PI / 8;
+            for (let step = 0; step < 3; step++) {
+                const sw = 36 - step * 5;
+                const sh = 4 + step * 4;
+                const sd = 20 - step * 3;
+                const b = new THREE.Mesh(new THREE.BoxGeometry(sw, 4, sd), matBrickLight);
+                b.position.set(0, step * 4 + 2, step * 2);
+                b.castShadow = true; b.receiveShadow = true;
+                b.userData.poiId = 'symphony';
+                clickableObjects.push(b);
+                symGrp.add(b);
+
+                const gr = new THREE.Mesh(new THREE.BoxGeometry(sw + 0.2, 0.4, sd + 0.2), matRoofGreen);
+                gr.position.set(0, step * 4 + 4.2, step * 2);
+                gr.castShadow = true;
+                gr.userData.poiId = 'symphony';
+                clickableObjects.push(gr);
+                symGrp.add(gr);
+            }
+            scene.add(symGrp);
+
+            // -------------------------------------------------------------
+            // 7. 誠之館 (Seishinkan - 1~4号館 コンプレックス)
+            // -------------------------------------------------------------
+            createBoxBuilding(-60, -25, 42, 14, 28, Math.PI / 16, matWhite, matDarkRoof, 0.4, 'seishinkan');
+            createBoxBuilding(-78, -35, 20, 12, 22, -Math.PI / 12, matWhite, matDarkRoof, 0.4, 'seishinkan');
+
+            // -------------------------------------------------------------
+            // 8. 第4学舎 (理工系高層・近代建築コンプレックス)
+            // -------------------------------------------------------------
+            const b4Grp = new THREE.Group();
+            b4Grp.position.set(25, 0, -80);
+            const b4High = new THREE.Mesh(new THREE.BoxGeometry(46, 26, 22), matWhite);
+            b4High.position.y = 13;
+            b4High.castShadow = true; b4High.receiveShadow = true;
+            b4High.userData.poiId = 'bldg4';
+            clickableObjects.push(b4High);
+            b4Grp.add(b4High);
+
+            const b4Roof1 = new THREE.Mesh(new THREE.BoxGeometry(47, 1, 23), matDarkRoof);
+            b4Roof1.position.y = 26.5;
+            b4Roof1.castShadow = true;
+            b4Roof1.userData.poiId = 'bldg4';
+            clickableObjects.push(b4Roof1);
+            b4Grp.add(b4Roof1);
+
+            const b4Wing = new THREE.Mesh(new THREE.BoxGeometry(20, 18, 48), matWhite);
+            b4Wing.position.set(24, 9, 13);
+            b4Wing.castShadow = true; b4Wing.receiveShadow = true;
+            b4Wing.userData.poiId = 'bldg4';
+            clickableObjects.push(b4Wing);
+            b4Grp.add(b4Wing);
+
+            const b4Roof2 = new THREE.Mesh(new THREE.BoxGeometry(21, 1, 49), matDarkRoof);
+            b4Roof2.position.set(24, 18.5, 13);
+            b4Roof2.castShadow = true;
+            b4Roof2.userData.poiId = 'bldg4';
+            clickableObjects.push(b4Roof2);
+            b4Grp.add(b4Roof2);
+
+            const bridge = new THREE.Mesh(new THREE.BoxGeometry(10, 4, 6), matGrey);
+            bridge.position.set(10, 12, 0);
+            b4Grp.add(bridge);
+            scene.add(b4Grp);
+
+            // -------------------------------------------------------------
+            // 9. イノベーション創生センター / 産官学連携センター
+            // -------------------------------------------------------------
+            createBoxBuilding(40, -25, 34, 15, 24, 0, matWhite, matDarkRoof, 0.4, 'innovation');
+
+            // -------------------------------------------------------------
+            // 10. 第2学舎 (経済・商学部) & 国際部
+            // -------------------------------------------------------------
+            createBoxBuilding(110, -10, 24, 18, 70, Math.PI / 12, matWhite, matDarkRoof, 0.4, 'bldg2');
+            createBoxBuilding(98, 15, 22, 12, 30, Math.PI / 12, matWhite, matGrey, 0.4, 'bldg2');
+
+            // 国際部 (Round Glass Dome atop)
+            const intlGrp = new THREE.Group();
+            intlGrp.position.set(120, 0, 45);
+            const intlBody = new THREE.Mesh(new THREE.BoxGeometry(28, 15, 24), matWhite);
+            intlBody.position.y = 7.5;
+            intlBody.castShadow = true; intlBody.receiveShadow = true;
+            intlBody.userData.poiId = 'kokusai';
+            clickableObjects.push(intlBody);
+            intlGrp.add(intlBody);
+
+            const intlDome = new THREE.Mesh(
+                new THREE.SphereGeometry(6, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+                new THREE.MeshStandardMaterial({ color: 0x64b5f6, roughness: 0.1, transparent: true, opacity: 0.8 })
+            );
+            intlDome.position.y = 15;
+            intlDome.userData.poiId = 'kokusai';
+            clickableObjects.push(intlDome);
+            intlGrp.add(intlDome);
+            scene.add(intlGrp);
+
+            // -------------------------------------------------------------
+            // 11. レストラン チルコロ (円神館) - 特徴的な円形建築
+            // -------------------------------------------------------------
+            const circoloGrp = new THREE.Group();
+            circoloGrp.position.set(105, 0, 80);
+            const cBody = new THREE.Mesh(new THREE.CylinderGeometry(14, 14, 11, 36), matGrey);
+            cBody.position.y = 5.5;
+            cBody.castShadow = true; cBody.receiveShadow = true;
+            cBody.userData.poiId = 'circolo';
+            clickableObjects.push(cBody);
+            circoloGrp.add(cBody);
+
+            const cRing = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 1.2, 36), matDarkRoof);
+            cRing.position.y = 11.6;
+            cRing.castShadow = true;
+            cRing.userData.poiId = 'circolo';
+            clickableObjects.push(cRing);
+            circoloGrp.add(cRing);
+
+            const cSkylight = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 1.5, 24), matWhite);
+            cSkylight.position.y = 12.8;
+            circoloGrp.add(cSkylight);
+            scene.add(circoloGrp);
+
+            // -------------------------------------------------------------
+            // 12. 正門・時計塔・第一診療所
+            // -------------------------------------------------------------
+            createBoxBuilding(65, 75, 46, 14, 16, 0, matWhite, matGrey, 0.4, 'clinic');
+
+            const clockGrp = new THREE.Group();
+            clockGrp.position.set(42, 0, 78);
+            const towerBase = new THREE.Mesh(new THREE.BoxGeometry(3.6, 22, 3.6), matWhite);
+            towerBase.position.y = 11;
+            towerBase.castShadow = true;
+            towerBase.userData.poiId = 'clock-tower';
+            clickableObjects.push(towerBase);
+            clockGrp.add(towerBase);
+
+            const faceMat = new THREE.MeshBasicMaterial({ color: 0x1e293b });
+            [-1.85, 1.85].forEach(x => {
+                const face = new THREE.Mesh(new THREE.CircleGeometry(1.1, 16), faceMat);
+                face.position.set(x, 19, 0);
+                face.rotation.y = (x > 0 ? 1 : -1) * Math.PI / 2;
+                clockGrp.add(face);
+            });
+
+            const beacon = new THREE.PointLight(0xfff1c5, 0, 25);
+            beacon.position.set(0, 22.5, 0);
+            clockGrp.add(beacon);
+            windowLights.push({ light: beacon, nightIntensity: 1.8 });
+            scene.add(clockGrp);
+
+            [-4, 4].forEach(gx => {
+                const pillar = new THREE.Mesh(new THREE.BoxGeometry(2, 6, 2), matBrick);
+                pillar.position.set(55 + gx, 3, 95);
+                pillar.castShadow = true;
+                pillar.userData.poiId = 'main-gate';
+                clickableObjects.push(pillar);
+                scene.add(pillar);
+            });
+
+            // -------------------------------------------------------------
+            // 13. 第1学舎 (法学部 1号館・3号館C棟)
+            // -------------------------------------------------------------
+            createBoxBuilding(-115, 45, 26, 17, 42, 0, matBrick, matDarkRoof, 0.4, 'bldg1');
+            createBoxBuilding(-110, 75, 38, 17, 20, 0, matBrick, matDarkRoof, 0.4, 'bldg1');
+
+            // -------------------------------------------------------------
+            // 14. 中央体育館 (Central Gym - 大アーチヴォールトドーム屋根)
+            // -------------------------------------------------------------
+            const cGymGrp = new THREE.Group();
+            cGymGrp.position.set(-130, 0, -20);
+            const cGymBase = new THREE.Mesh(new THREE.BoxGeometry(36, 8, 52), matWhite);
+            cGymBase.position.y = 4;
+            cGymBase.castShadow = true; cGymBase.receiveShadow = true;
+            cGymBase.userData.poiId = 'gym-central';
+            clickableObjects.push(cGymBase);
+            cGymGrp.add(cGymBase);
+
+            const cGymVault = new THREE.Mesh(
+                new THREE.CylinderGeometry(18, 18, 52, 36, 1, false, 0, Math.PI),
+                new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.3 })
+            );
+            cGymVault.rotation.z = Math.PI / 2;
+            cGymVault.position.set(0, 8, 0);
+            cGymVault.castShadow = true;
+            cGymVault.userData.poiId = 'gym-central';
+            clickableObjects.push(cGymVault);
+            cGymGrp.add(cGymVault);
+            scene.add(cGymGrp);
+
+            // -------------------------------------------------------------
+            // 15. 東体育館 (East Gym - 屋上テニスコート)
+            // -------------------------------------------------------------
+            const eGymGrp = new THREE.Group();
+            eGymGrp.position.set(-65, 0, -75);
+            const eGymBody = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 50), matWhite);
+            eGymBody.position.y = 7;
+            eGymBody.castShadow = true; eGymBody.receiveShadow = true;
+            eGymBody.userData.poiId = 'gym-east';
+            clickableObjects.push(eGymBody);
+            eGymGrp.add(eGymBody);
+
+            const tennisTex = createTennisTexture();
+            const tennisMesh = new THREE.Mesh(new THREE.PlaneGeometry(32, 48), new THREE.MeshStandardMaterial({ map: tennisTex, roughness: 0.8 }));
+            tennisMesh.rotation.x = -Math.PI / 2;
+            tennisMesh.position.set(0, 14.1, 0);
+            tennisMesh.userData.poiId = 'gym-east';
+            clickableObjects.push(tennisMesh);
+            eGymGrp.add(tennisMesh);
+
+            const fenceMat = new THREE.MeshBasicMaterial({ color: 0x94a3b8, wireframe: true });
+            const fence = new THREE.Mesh(new THREE.BoxGeometry(33, 4, 49), fenceMat);
+            fence.position.y = 16.1;
+            eGymGrp.add(fence);
+            scene.add(eGymGrp);
+
+            // -------------------------------------------------------------
+            // 16. 中央グラウンド (Central Ground - 400mトラック & サッカー場)
+            // -------------------------------------------------------------
+            const trackTex = createTrackTexture();
+            const trackMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(90, 65),
+                new THREE.MeshStandardMaterial({ map: trackTex, roughness: 0.9 })
+            );
+            trackMesh.rotation.x = -Math.PI / 2;
+            trackMesh.position.set(-30, 0.16, -125);
+            trackMesh.receiveShadow = true;
+            trackMesh.userData.poiId = 'ground-central';
+            clickableObjects.push(trackMesh);
+            scene.add(trackMesh);
+
+            const floodPositions = [
+                [-72, -96], [12, -96],
+                [-72, -154], [12, -154]
+            ];
+            floodPositions.forEach(fp => {
+                const fGrp = new THREE.Group();
+                fGrp.position.set(fp[0], 0, fp[1]);
+                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 28, 8), matGrey);
+                pole.position.y = 14;
+                pole.castShadow = true;
+                fGrp.add(pole);
+                const lampHead = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+                lampHead.position.set(0, 27, 0);
+                fGrp.add(lampHead);
+
+                const flSpot = new THREE.PointLight(0xfffaed, 0, 70, 1.2);
+                flSpot.position.set(0, 27, 0);
+                fGrp.add(flSpot);
+                windowLights.push({ light: flSpot, nightIntensity: 1.8 });
+                scene.add(fGrp);
+            });
+
+            // -------------------------------------------------------------
+            // 17. 北グラウンド (North Ground - 扇型野球場)
+            // -------------------------------------------------------------
+            const bbTex = createBaseballTexture();
+            const bbMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(75, 75),
+                new THREE.MeshStandardMaterial({ map: bbTex, roughness: 0.9 })
+            );
+            bbMesh.rotation.x = -Math.PI / 2;
+            bbMesh.position.set(-105, 0.16, -150);
+            bbMesh.receiveShadow = true;
+            bbMesh.userData.poiId = 'ground-north';
+            clickableObjects.push(bbMesh);
+            scene.add(bbMesh);
+
+            const backnet = new THREE.Mesh(
+                new THREE.CylinderGeometry(22, 22, 7, 16, 1, true, -Math.PI * 0.75, Math.PI * 0.5),
+                new THREE.MeshBasicMaterial({ color: 0x475569, wireframe: true, side: THREE.DoubleSide })
+            );
+            backnet.position.set(-105, 3.5, -135);
+            scene.add(backnet);
+
+            // -------------------------------------------------------------
+            // 18. 名神高速道路 & 千里山トンネル & 走るミニカー群
+            // -------------------------------------------------------------
+            const matExpressway = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.expressway, PALETTE.night.expressway, 0.7, 0.6);
+            const roadGrp = new THREE.Group();
+            roadGrp.position.set(0, 2, -180);
+            roadGrp.rotation.y = -Math.PI / 16;
+
+            const roadSlab = new THREE.Mesh(new THREE.BoxGeometry(340, 2.5, 20), matExpressway);
+            roadSlab.receiveShadow = true;
+            roadSlab.userData.poiId = 'meishin';
+            clickableObjects.push(roadSlab);
+            roadGrp.add(roadSlab);
+
+            [-9.8, 9.8].forEach(wz => {
+                const wall = new THREE.Mesh(new THREE.BoxGeometry(340, 1.8, 0.6), matGrey);
+                wall.position.set(0, 1.8, wz);
+                wall.castShadow = true;
+                roadGrp.add(wall);
+            });
+
+            const divider = new THREE.Mesh(new THREE.BoxGeometry(340, 1.2, 0.8), matGrey);
+            divider.position.set(0, 1.6, 0);
+            roadGrp.add(divider);
+
+            const tunnelGrp = new THREE.Group();
+            tunnelGrp.position.set(125, 0, 0);
+            const tunnelArch = new THREE.Mesh(new THREE.BoxGeometry(16, 12, 24), matGrey);
+            tunnelArch.position.y = 5;
+            tunnelGrp.add(tunnelArch);
+            const tunnelDark = new THREE.Mesh(new THREE.BoxGeometry(16.2, 7, 18), new THREE.MeshBasicMaterial({ color: 0x050505 }));
+            tunnelDark.position.y = 3.5;
+            tunnelGrp.add(tunnelDark);
+            roadGrp.add(tunnelGrp);
+            scene.add(roadGrp);
+
+            // Expressway Traffic (Animated Cars)
+            const carColors = [0xffffff, 0xef4444, 0x3b82f6, 0x10b981, 0x374151, 0xeab308];
+            for (let i = 0; i < 9; i++) {
+                const isEastbound = i % 2 === 0;
+                const carCol = carColors[i % carColors.length];
+                const carMesh = new THREE.Group();
+
+                const cBody = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1.6, 2.2), new THREE.MeshStandardMaterial({ color: carCol, roughness: 0.3 }));
+                cBody.position.y = 0.8;
+                cBody.castShadow = true;
+                carMesh.add(cBody);
+
+                const headLight = new THREE.PointLight(0xfffaed, 0, 15);
+                headLight.position.set(2.5, 0.8, 0);
+                carMesh.add(headLight);
+                const tailLight = new THREE.PointLight(0xff1111, 0, 8);
+                tailLight.position.set(-2.5, 0.8, 0);
+                carMesh.add(tailLight);
+                windowLights.push({ light: headLight, nightIntensity: 0.8 });
+                windowLights.push({ light: tailLight, nightIntensity: 0.5 });
+
+                const laneZ = isEastbound ? 4.5 : -4.5;
+                const startX = -150 + Math.random() * 260;
+                const speed = (isEastbound ? 1 : -1) * (0.35 + Math.random() * 0.25);
+                carMesh.position.set(startX, 1.5, laneZ);
+                if (!isEastbound) carMesh.rotation.y = Math.PI;
+
+                roadGrp.add(carMesh);
+                cars.push({ mesh: carMesh, speed, laneZ, isEastbound });
+            }
+
+            // -------------------------------------------------------------
+            // 19. 周辺街並み (Kandai-dori Town Houses & Street Blocks)
+            // -------------------------------------------------------------
+            const townMat = registerMat(new THREE.MeshStandardMaterial(), 0xd0d5dc, 0x242f44, 0.8, 0.7);
+            const townRoofMat = registerMat(new THREE.MeshStandardMaterial(), 0x687280, 0x161e2e, 0.8, 0.7);
+            const createTownBlock = (cx, cz, count, rx, rz) => {
+                for (let i = 0; i < count; i++) {
+                    const bx = cx + (Math.random() - 0.5) * rx;
+                    const bz = cz + (Math.random() - 0.5) * rz;
+                    const bw = 7 + Math.random() * 6;
+                    const bd = 7 + Math.random() * 6;
+                    const bh = 5 + Math.random() * 8;
+                    createBoxBuilding(bx, bz, bw, bh, bd, Math.random() * 0.3, townMat, townRoofMat, 0.2);
+                }
+            };
+            createTownBlock(20, 125, 18, 120, 35);
+            createTownBlock(-60, 130, 12, 60, 30);
+            createTownBlock(110, 120, 12, 50, 30);
+            createTownBlock(160, -20, 16, 50, 140);
+            createTownBlock(-150, -100, 14, 50, 80);
+
+            // -------------------------------------------------------------
+            // 20. 樹木・植栽 (InstancedMesh Campus Trees - 180+ Trees)
+            // -------------------------------------------------------------
+            const treeGeo = new THREE.DodecahedronGeometry(1.6, 1);
+            const matTreeDay = new THREE.MeshStandardMaterial({ color: 0x3d7031, roughness: 0.9, flatShading: true });
+            const treeMat = registerMat(matTreeDay, 0x3d7031, 0x24422b, 0.9, 0.8);
+
+            const treePositions = [];
+            const addTreesInArea = (cx, cz, rx, rz, n) => {
+                for (let i = 0; i < n; i++) {
+                    treePositions.push([
+                        cx + (Math.random() - 0.5) * rx,
+                        cz + (Math.random() - 0.5) * rz,
+                        0.7 + Math.random() * 0.9
+                    ]);
+                }
+            };
+            addTreesInArea(80, 20, 35, 90, 45);   // East hillside forest
+            addTreesInArea(-75, 40, 45, 25, 25);  // In front of Museum
+            addTreesInArea(-25, 45, 25, 15, 15);  // Between Shobunkan & Ibunkan
+            addTreesInArea(5, 15, 20, 20, 12);    // Around Yukyu no Niwa
+            addTreesInArea(25, 55, 30, 20, 18);   // South of Library
+            addTreesInArea(-90, -20, 30, 60, 25); // Behind Museum & West slope
+            addTreesInArea(30, -45, 35, 20, 15);  // Around 4th Building
+            addTreesInArea(-30, -92, 50, 15, 20); // Between East Gym & Track
+
+            const treeInstanced = new THREE.InstancedMesh(treeGeo, treeMat, treePositions.length);
+            treeInstanced.castShadow = true;
+            const dummy = new THREE.Object3D();
+            treePositions.forEach((pos, idx) => {
+                dummy.position.set(pos[0], pos[2] * 2.2, pos[1]);
+                dummy.scale.set(pos[2] * 1.5, pos[2] * 1.8, pos[2] * 1.5);
+                dummy.rotation.y = Math.random() * Math.PI;
+                dummy.updateMatrix();
+                treeInstanced.setMatrixAt(idx, dummy.matrix);
+            });
+            treeInstanced.instanceMatrix.needsUpdate = true;
+            scene.add(treeInstanced);
+        }
+
+        // ==========================================
+        // 7. POI Overlay Markers Creation
+        // ==========================================
+        function createPoiMarkers() {
+            const container = document.getElementById('poi-container');
+            container.innerHTML = '';
+            poiElements = [];
+
+            POI_DATA.forEach(poi => {
+                const el = document.createElement('div');
+                el.className = 'poi-marker';
+                el.dataset.id = poi.id;
+
+                el.innerHTML = `
+                    <div class="poi-pin" style="background-color: ${poi.color};">
+                        <i data-lucide="${poi.icon}" class="w-4 h-4 text-white"></i>
+                    </div>
+                    <div class="poi-label bg-white/95 text-gray-800 border border-black/10">
+                        ${poi.name.split(' (')[0].split(' /')[0]}
+                    </div>
+                `;
+
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    focusOnPoi(poi.id);
+                });
+
+                container.appendChild(el);
+                poiElements.push({
+                    id: poi.id,
+                    element: el,
+                    worldPos: new THREE.Vector3(poi.pos[0], poi.pos[1], poi.pos[2])
+                });
+            });
+
+            lucide.createIcons();
+        }
+
+        const tempV = new THREE.Vector3();
+        function updatePoiPositions() {
+            if (!showLabels) {
+                document.getElementById('poi-container').style.display = 'none';
+                return;
+            }
+            document.getElementById('poi-container').style.display = 'block';
+
+            const halfW = window.innerWidth / 2;
+            const halfH = window.innerHeight / 2;
+
+            poiElements.forEach(item => {
+                tempV.copy(item.worldPos);
+                tempV.project(camera);
+
+                if (tempV.z > 1) {
+                    item.element.style.display = 'none';
+                    return;
+                }
+
+                const x = (tempV.x * halfW) + halfW;
+                const y = -(tempV.y * halfH) + halfH;
+
+                item.element.style.display = 'block';
+                item.element.style.left = `${x}px`;
+                item.element.style.top = `${y}px`;
+
+                const dist = camera.position.distanceTo(item.worldPos);
+                const scale = Math.max(0.65, Math.min(1.08, 140 / dist));
+                item.element.style.transform = `translate(-50%, -100%) scale(${scale})`;
+            });
+        }
+
+        // ==========================================
+        // 8. Interactive Camera Movement & Focus
+        // ==========================================
+        function animateCamera(targetCamPos, targetLookAt, duration = 1200) {
+            new TWEEN.Tween(camera.position)
+                .to({ x: targetCamPos[0], y: targetCamPos[1], z: targetCamPos[2] }, duration)
+                .easing(TWEEN.Easing.Cubic.InOut)
+                .start();
+
+            new TWEEN.Tween(controls.target)
+                .to({ x: targetLookAt[0], y: targetLookAt[1], z: targetLookAt[2] }, duration)
+                .easing(TWEEN.Easing.Cubic.InOut)
+                .start();
+        }
+
+        function focusOnPoi(id) {
+            const poi = POI_DATA.find(p => p.id === id);
+            if (!poi) return;
+            selectedPoiId = id;
+
+            animateCamera(poi.camPos, [poi.pos[0], 0, poi.pos[2]]);
+            showDetailCard(poi);
+        }
+
+        function showDetailCard(poi) {
+            const card = document.getElementById('detail-card');
+            const iconBox = document.getElementById('detail-icon-box');
+            const icon = document.getElementById('detail-icon');
+            const category = document.getElementById('detail-category');
+            const title = document.getElementById('detail-title');
+            const subtitle = document.getElementById('detail-subtitle');
+            const desc = document.getElementById('detail-desc');
+            const hours = document.getElementById('detail-hours');
+
+            iconBox.style.backgroundColor = poi.color;
+            icon.setAttribute('data-lucide', poi.icon);
+            category.textContent = poi.category;
+            title.textContent = poi.name;
+            subtitle.textContent = poi.nameEn;
+            desc.textContent = poi.desc;
+            hours.textContent = poi.hours || '常時開放';
+
+            lucide.createIcons();
+
+            card.classList.remove('hidden');
+            setTimeout(() => {
+                card.classList.remove('opacity-0', 'translate-y-4');
+            }, 10);
+        }
+
+        function hideDetailCard() {
+            const card = document.getElementById('detail-card');
+            card.classList.add('opacity-0', 'translate-y-4');
+            setTimeout(() => {
+                card.classList.add('hidden');
+                selectedPoiId = null;
+            }, 300);
+        }
+
+        // Click Raycasting on 3D Buildings
+        function onPointerClick(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(clickableObjects, true);
+
+            if (intersects.length > 0) {
+                const targetObj = intersects[0].object;
+                if (targetObj.userData && targetObj.userData.poiId) {
+                    focusOnPoi(targetObj.userData.poiId);
+                }
+            }
+        }
+
+        // ==========================================
+        // 9. Day / Night Theme Switching
+        // ==========================================
+        function toggleTheme() {
+            isNight = !isNight;
+            const themeBtn = document.getElementById('theme-btn');
+            const themeIcon = document.getElementById('theme-icon');
+            const topCard = document.getElementById('top-card');
+            const detailPanel = document.getElementById('detail-panel');
+            const searchResults = document.getElementById('search-results');
+
+            if (isNight) {
+                // Night Mode (Recreates Photo 1 - Slate Blue Apple Maps 3D View)
+                document.body.classList.replace('theme-day', 'theme-night');
+                themeIcon.setAttribute('data-lucide', 'sun');
+                themeBtn.classList.add('text-amber-400');
+                themeBtn.classList.remove('text-gray-700');
+
+                // Scene background & fog
+                scene.background.setHex(PALETTE.night.bg);
+                scene.fog.color.setHex(PALETTE.night.fog);
+
+                // Ambient & Moon Lights
+                ambientLight.intensity = 0.95;
+                ambientLight.color.setHex(0x7890b8);
+                sunLight.intensity = 0.05;
+                moonLight.intensity = 1.25;
+
+                // Materials
+                dayMaterials.forEach(mat => {
+                    mat.color.setHex(mat.userData.nightColor);
+                    mat.roughness = mat.userData.nightRough;
+                    mat.needsUpdate = true;
+                });
+
+                // Window & Flood Lights ON
+                windowLights.forEach(wl => wl.light.intensity = wl.nightIntensity);
+
+                // UI Glass Dark Mode
+                topCard.classList.replace('glass-panel', 'glass-panel-dark');
+                detailPanel.classList.replace('glass-panel', 'glass-panel-dark');
+                searchResults.classList.replace('glass-panel', 'glass-panel-dark');
+                document.getElementById('title-text').classList.replace('text-gray-900', 'text-white');
+                document.getElementById('detail-title').classList.replace('text-gray-900', 'text-white');
+                document.getElementById('detail-desc').classList.replace('text-gray-600', 'text-gray-300');
+
+                // POI labels dark background
+                document.querySelectorAll('.poi-label').forEach(lbl => {
+                    lbl.classList.replace('bg-white/95', 'bg-slate-900/90');
+                    lbl.classList.replace('text-gray-800', 'text-white');
+                });
+            } else {
+                // Day Mode (Recreates Photo 2 - Photoreal Satellite View)
+                document.body.classList.replace('theme-night', 'theme-day');
+                themeIcon.setAttribute('data-lucide', 'moon');
+                themeBtn.classList.remove('text-amber-400');
+                themeBtn.classList.add('text-gray-700');
+
+                scene.background.setHex(PALETTE.day.bg);
+                scene.fog.color.setHex(PALETTE.day.fog);
+
+                ambientLight.intensity = 0.72;
+                ambientLight.color.setHex(0xffffff);
+                sunLight.intensity = 1.15;
+                moonLight.intensity = 0;
+
+                dayMaterials.forEach(mat => {
+                    mat.color.setHex(mat.userData.dayColor);
+                    mat.roughness = mat.userData.dayRough;
+                    mat.needsUpdate = true;
+                });
+
+                // Window & Flood Lights OFF
+                windowLights.forEach(wl => wl.light.intensity = 0);
+
+                // UI Glass Light Mode
+                topCard.classList.replace('glass-panel-dark', 'glass-panel');
+                detailPanel.classList.replace('glass-panel-dark', 'glass-panel');
+                searchResults.classList.replace('glass-panel-dark', 'glass-panel');
+                document.getElementById('title-text').classList.replace('text-white', 'text-gray-900');
+                document.getElementById('detail-title').classList.replace('text-white', 'text-gray-900');
+                document.getElementById('detail-desc').classList.replace('text-gray-300', 'text-gray-600');
+
+                // POI labels light background
+                document.querySelectorAll('.poi-label').forEach(lbl => {
+                    lbl.classList.replace('bg-slate-900/90', 'bg-white/95');
+                    lbl.classList.replace('text-white', 'text-gray-800');
+                });
+            }
+
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // 10. UI Setup & Interactions
+        // ==========================================
+        function setupUI() {
+            // Theme toggle
+            document.getElementById('theme-btn').addEventListener('click', toggleTheme);
+
+            // Labels visibility toggle
+            document.getElementById('labels-btn').addEventListener('click', () => {
+                showLabels = !showLabels;
+                const btn = document.getElementById('labels-btn');
+                btn.classList.toggle('text-blue-600', showLabels);
+                btn.classList.toggle('text-gray-400', !showLabels);
+            });
+
+            // Compass reset
+            const compassBtn = document.getElementById('compass-btn');
+            compassBtn.addEventListener('click', () => {
+                animateCamera([0, 175, 240], [0, 5, 0]);
+            });
+
+            // 2D / 3D Toggle
+            const dimBtn = document.getElementById('dim-btn');
+            dimBtn.addEventListener('click', () => {
+                is3D = !is3D;
+                dimBtn.textContent = is3D ? '3D' : '2D';
+                if (!is3D) {
+                    animateCamera([0, 260, 1], [0, 0, 0]);
+                } else {
+                    animateCamera([0, 175, 240], [0, 5, 0]);
+                }
+            });
+
+            // Zoom In / Out
+            document.getElementById('zoom-in-btn').addEventListener('click', () => {
+                const dir = camera.position.clone().sub(controls.target).normalize();
+                new TWEEN.Tween(camera.position)
+                    .to(camera.position.clone().sub(dir.multiplyScalar(35)), 300)
+                    .easing(TWEEN.Easing.Quadratic.Out)
+                    .start();
+            });
+            document.getElementById('zoom-out-btn').addEventListener('click', () => {
+                const dir = camera.position.clone().sub(controls.target).normalize();
+                new TWEEN.Tween(camera.position)
+                    .to(camera.position.clone().add(dir.multiplyScalar(35)), 300)
+                    .easing(TWEEN.Easing.Quadratic.Out)
+                    .start();
+            });
+
+            // Home Full View
+            document.getElementById('home-btn').addEventListener('click', () => {
+                animateCamera([0, 175, 240], [0, 5, 0]);
+                hideDetailCard();
+            });
+
+            // Detail Card Close
+            document.getElementById('close-detail-btn').addEventListener('click', hideDetailCard);
+            document.getElementById('detail-zoom-btn').addEventListener('click', () => {
+                if (selectedPoiId) focusOnPoi(selectedPoiId);
+            });
+
+            // Quick Category Pills
+            document.querySelectorAll('.quick-pill').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.quick-pill').forEach(p => p.classList.remove('active', 'border-blue-500'));
+                    btn.classList.add('active', 'border-blue-500');
+
+                    const focusKey = btn.dataset.focus;
+                    if (focusKey === 'all') {
+                        animateCamera([0, 175, 240], [0, 5, 0]);
+                        hideDetailCard();
+                    } else if (focusKey === 'gate') {
+                        focusOnPoi('main-gate');
+                    } else if (focusKey === 'library') {
+                        focusOnPoi('library');
+                    } else if (focusKey === 'museum') {
+                        focusOnPoi('museum');
+                    } else if (focusKey === 'symphony') {
+                        focusOnPoi('symphony');
+                    } else if (focusKey === 'bldg4') {
+                        focusOnPoi('bldg4');
+                    } else if (focusKey === 'sports') {
+                        focusOnPoi('ground-central');
+                    } else if (focusKey === 'circolo') {
+                        focusOnPoi('circolo');
+                    }
+                });
+            });
+
+            // Search Bar Functionality
+            const searchInput = document.getElementById('search-input');
+            const searchResults = document.getElementById('search-results');
+            const clearBtn = document.getElementById('clear-search-btn');
+
+            searchInput.addEventListener('input', (e) => {
+                const q = e.target.value.trim().toLowerCase();
+                if (!q) {
+                    searchResults.classList.add('hidden');
+                    clearBtn.classList.add('hidden');
+                    return;
+                }
+                clearBtn.classList.remove('hidden');
+
+                const matches = POI_DATA.filter(p =>
+                    p.name.toLowerCase().includes(q) ||
+                    p.nameEn.toLowerCase().includes(q) ||
+                    p.category.toLowerCase().includes(q) ||
+                    p.desc.toLowerCase().includes(q)
+                );
+
+                if (matches.length === 0) {
+                    searchResults.innerHTML = `<div class="p-3 text-center text-gray-400">見つかりませんでした</div>`;
+                } else {
+                    searchResults.innerHTML = matches.map(p => `
+                        <div class="search-item flex items-center space-x-2.5 p-2 rounded-xl hover:bg-black/5 cursor-pointer transition" data-id="${p.id}">
+                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0" style="background-color: ${p.color};">
+                                <i data-lucide="${p.icon}" class="w-3.5 h-3.5"></i>
+                            </div>
+                            <div class="truncate">
+                                <div class="font-bold text-gray-800 text-xs truncate">${p.name}</div>
+                                <div class="text-[10px] text-gray-400">${p.category}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+
+                lucide.createIcons();
+                searchResults.classList.remove('hidden');
+
+                searchResults.querySelectorAll('.search-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const id = item.dataset.id;
+                        focusOnPoi(id);
+                        searchResults.classList.add('hidden');
+                        searchInput.value = '';
+                        clearBtn.classList.add('hidden');
+                    });
+                });
+            });
+
+            clearBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                searchResults.classList.add('hidden');
+                clearBtn.classList.add('hidden');
+            });
+
+            lucide.createIcons();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // 11. Animation Loop
+        // ==========================================
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. Update Tween
+            TWEEN.update();
+
+            // 2. Update OrbitControls
+            controls.update();
+
+            // 3. Expressway Cars Traffic Animation
+            cars.forEach(car => {
+                car.mesh.position.x += car.speed;
+                if (car.isEastbound && car.mesh.position.x > 145) {
+                    car.mesh.position.x = -160;
+                } else if (!car.isEastbound && car.mesh.position.x < -160) {
+                    car.mesh.position.x = 145;
+                }
+            });
+
+            // 4. Update Compass needle rotation based on camera angle
+            const compassArrow = document.getElementById('compass-arrow');
+            if (compassArrow) {
+                const angle = controls.getAzimuthalAngle();
+                compassArrow.style.transform = `rotate(${angle}rad)`;
+            }
+
+            // 5. Update POI Screen Positions
+            updatePoiPositions();
+
+            // 6. Render 3D Scene
+            renderer.render(scene, camera);
+        }
+
+        // Initialize when window loads
+        window.addEventListener('load', init);
+    </script>
+</body>
+
+</html>
