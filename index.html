@@ -141,6 +141,13 @@
                 </div>
 
                 <div class="flex items-center space-x-1.5 flex-shrink-0">
+                    <!-- Mobile Bookmark Quick Badge -->
+                    <button id="mobile-bookmark-badge" title="保存した行きたい場所を表示"
+                        class="hidden md:hidden items-center space-x-1 px-2 py-1.5 rounded-xl bg-amber-500/15 text-amber-600 border border-amber-400/40 text-[11px] font-extrabold active:scale-95 transition">
+                        <span>★</span>
+                        <span id="mobile-bookmark-count">0</span>
+                    </button>
+
                     <!-- Day/Night Toggle -->
                     <button id="theme-btn" title="昼/夜モード切替" class="flex items-center space-x-1 px-2.5 py-1.5 md:px-3 md:py-2 rounded-xl md:rounded-2xl bg-black/5 hover:bg-black/10 active:scale-95 transition text-gray-700 border border-black/5">
                         <i id="theme-icon" data-lucide="moon" class="w-3.5 h-3.5 md:w-4 md:h-4"></i>
@@ -189,6 +196,23 @@
 
                     <!-- Search Results Dropdown -->
                     <div id="search-results" class="hidden absolute left-0 right-0 top-full mt-1.5 max-h-56 overflow-y-auto rounded-2xl glass-panel shadow-2xl p-1.5 z-40 space-y-1 text-xs">
+                    </div>
+                </div>
+
+                <!-- Saved Bookmarks (行きたい場所 - Persisted in Browser localStorage) -->
+                <div id="bookmarks-section" class="mt-2.5 pt-2 border-t border-black/5">
+                    <div class="flex items-center justify-between mb-1.5">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="text-amber-500 text-xs font-black">★</span>
+                            <span id="bookmarks-title" class="text-[11px] font-extrabold text-gray-700">行きたい場所 (ブックマーク)</span>
+                            <span id="bookmark-count-badge" class="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-600">0</span>
+                        </div>
+                        <button id="clear-bookmarks-btn" class="hidden text-[10px] font-bold text-gray-400 hover:text-red-500 transition">
+                            すべて解除
+                        </button>
+                    </div>
+                    <div id="bookmarks-list" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                        <span class="text-[10px] text-gray-400 py-0.5">施設や検索結果の「★」で保存できます</span>
                     </div>
                 </div>
             </div>
@@ -306,11 +330,18 @@
             <p id="detail-desc" class="text-gray-600 text-xs mt-3.5 leading-relaxed">
                 施設の詳細な説明が入ります。
             </p>
-            <div id="detail-meta" class="mt-3.5 pt-3 border-t border-gray-200/60 flex items-center justify-between text-[11px] text-gray-500">
-                <span id="detail-hours">開館時間: 平日 8:30 - 21:00</span>
-                <button id="detail-zoom-btn" class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition active:scale-95 shadow-sm">
-                    近づく
-                </button>
+            <div id="detail-meta" class="mt-3.5 pt-3 border-t border-gray-200/60 flex items-center justify-between gap-2 text-[11px] text-gray-500">
+                <span id="detail-hours" class="truncate">開館時間: 平日 8:30 - 21:00</span>
+                <div class="flex items-center space-x-1.5 flex-shrink-0">
+                    <button id="detail-bookmark-btn" title="行きたい場所にブックマーク保存"
+                        class="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 border border-amber-400/40 font-extrabold transition active:scale-95 shadow-sm flex items-center space-x-1">
+                        <span id="detail-bookmark-star">☆</span>
+                        <span id="detail-bookmark-label">保存</span>
+                    </button>
+                    <button id="detail-zoom-btn" class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition active:scale-95 shadow-sm">
+                        近づく
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -665,6 +696,134 @@
         const clickableObjects = [];
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
+
+        // Bookmarks (行きたい場所) persisted in browser localStorage
+        const BOOKMARK_STORAGE_KEY = 'ku_3dmap_bookmarks_v1';
+        let bookmarkedIds = [];
+
+        function loadBookmarks() {
+            try {
+                const raw = localStorage.getItem(BOOKMARK_STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                        bookmarkedIds = parsed.filter(id => typeof id === 'string');
+                    }
+                }
+            } catch (err) {
+                console.warn('Bookmark load error:', err);
+                bookmarkedIds = [];
+            }
+        }
+
+        function saveBookmarks() {
+            try {
+                localStorage.setItem(BOOKMARK_STORAGE_KEY, JSON.stringify(bookmarkedIds));
+            } catch (err) {
+                console.warn('Bookmark save error:', err);
+            }
+        }
+
+        function isBookmarked(id) {
+            return bookmarkedIds.includes(id);
+        }
+
+        function findPlaceById(id) {
+            return POI_DATA.find(p => p.id === id) || TENT_AND_BIN_DATA.find(t => t.id === id);
+        }
+
+        function updateDetailBookmarkUI(id) {
+            const btn = document.getElementById('detail-bookmark-btn');
+            const star = document.getElementById('detail-bookmark-star');
+            const label = document.getElementById('detail-bookmark-label');
+            if (!btn || !star || !label) return;
+
+            if (id && isBookmarked(id)) {
+                star.textContent = '★';
+                label.textContent = '保存済み';
+                btn.className = 'px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white border border-amber-400 font-extrabold transition active:scale-95 shadow-sm flex items-center space-x-1';
+            } else {
+                star.textContent = '☆';
+                label.textContent = '保存';
+                btn.className = 'px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 border border-amber-400/40 font-extrabold transition active:scale-95 shadow-sm flex items-center space-x-1';
+            }
+        }
+
+        function renderBookmarksUI() {
+            const listEl = document.getElementById('bookmarks-list');
+            const countBadge = document.getElementById('bookmark-count-badge');
+            const clearAllBtn = document.getElementById('clear-bookmarks-btn');
+            const mobileBadge = document.getElementById('mobile-bookmark-badge');
+            const mobileCount = document.getElementById('mobile-bookmark-count');
+
+            // Filter out any unknown IDs
+            const validItems = bookmarkedIds.map(id => findPlaceById(id)).filter(Boolean);
+            const count = validItems.length;
+
+            if (countBadge) countBadge.textContent = String(count);
+            if (mobileCount) mobileCount.textContent = String(count);
+            if (mobileBadge) {
+                if (count > 0) {
+                    mobileBadge.classList.remove('hidden');
+                    mobileBadge.classList.add('flex');
+                } else {
+                    mobileBadge.classList.add('hidden');
+                    mobileBadge.classList.remove('flex');
+                }
+            }
+            if (clearAllBtn) {
+                if (count > 0) {
+                    clearAllBtn.classList.remove('hidden');
+                } else {
+                    clearAllBtn.classList.add('hidden');
+                }
+            }
+
+            // Update 3D Map POI Marker star badges
+            poiElements.forEach(item => {
+                const badge = item.element.querySelector('.poi-bookmark-star');
+                if (badge) {
+                    badge.style.display = isBookmarked(item.id) ? 'inline' : 'none';
+                }
+            });
+
+            // Update detail card button if open
+            if (selectedPoiId) {
+                updateDetailBookmarkUI(selectedPoiId);
+            }
+
+            if (!listEl) return;
+
+            if (count === 0) {
+                listEl.innerHTML = `<span class="text-[10px] text-gray-400 py-0.5">施設や検索結果の「☆」で行きたい場所を保存できます</span>`;
+                return;
+            }
+
+            listEl.innerHTML = validItems.map(p => {
+                const shortName = p.tentNo ? `テント ${p.tentNo}` : p.name.split(' (')[0].split(' /')[0];
+                return `
+                    <div class="bookmark-chip flex-shrink-0 flex items-center space-x-1 pl-2 pr-1.5 py-1 rounded-full bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-[11px] font-bold ${isNight ? 'text-amber-300' : 'text-amber-900'} cursor-pointer transition active:scale-95" data-id="${p.id}">
+                        <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: ${p.color};"></span>
+                        <span class="max-w-[125px] truncate">${shortName}</span>
+                        <button class="remove-bookmark-btn ml-0.5 w-4 h-4 rounded-full hover:bg-black/10 flex items-center justify-center text-amber-600/80 hover:text-red-500 transition" data-id="${p.id}" title="ブックマーク解除">
+                            ×
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function toggleBookmark(id) {
+            if (!id) return;
+            const idx = bookmarkedIds.indexOf(id);
+            if (idx >= 0) {
+                bookmarkedIds.splice(idx, 1);
+            } else {
+                bookmarkedIds.push(id);
+            }
+            saveBookmarks();
+            renderBookmarksUI();
+        }
 
         // Color Palettes
         // Photo 1: Deep Navy/Slate Apple Maps 3D mode
@@ -1040,11 +1199,13 @@
             // 6. Build World Geometry
             buildCampus();
 
-            // 7. Setup POI Markers
+            // 7. Load Saved Bookmarks from Browser Cache (localStorage) & Setup POI Markers
+            loadBookmarks();
             createPoiMarkers();
 
             // 8. Event Listeners & UI Binding
             setupUI();
+            renderBookmarksUI();
 
             // Smoothly remove loading screen
             setTimeout(() => {
@@ -2257,7 +2418,7 @@
                         <i data-lucide="${poi.icon}" class="w-4 h-4 text-white"></i>
                     </div>
                     <div class="poi-label bg-white/95 text-gray-800 border border-black/10">
-                        ${poi.name.split(' (')[0].split(' /')[0]}
+                        <span class="poi-bookmark-star text-amber-500 mr-0.5" style="display: ${isBookmarked(poi.id) ? 'inline' : 'none'};">★</span>${poi.name.split(' (')[0].split(' /')[0]}
                     </div>
                 `;
 
@@ -2331,8 +2492,8 @@
                 .start();
         }
 
-        function focusOnPoi(id, closer = false) {
-            const poi = POI_DATA.find(p => p.id === id) || TENT_AND_BIN_DATA.find(t => t.id === id);
+        function focusOnPoi(id, closer = false, forceShowCard = false) {
+            const poi = findPlaceById(id);
             if (!poi) return;
             selectedPoiId = id;
 
@@ -2354,14 +2515,14 @@
                 );
             }
 
-            if (showLabels) {
-                showDetailCard(poi);
+            if (showLabels || forceShowCard) {
+                showDetailCard(poi, forceShowCard);
             }
         }
 
-        function showDetailCard(poi) {
-            // Do not display facility explanation when facility navigation is OFF
-            if (!showLabels) return;
+        function showDetailCard(poi, forceShow = false) {
+            // Do not display facility explanation when facility navigation is OFF (unless explicitly opened via search/bookmark)
+            if (!showLabels && !forceShow) return;
 
             const card = document.getElementById('detail-card');
             const iconBox = document.getElementById('detail-icon-box');
@@ -2380,6 +2541,7 @@
             desc.textContent = poi.desc;
             hours.textContent = poi.hours || '常時開放';
 
+            updateDetailBookmarkUI(poi.id);
             lucide.createIcons();
 
             card.classList.remove('hidden');
@@ -2740,6 +2902,8 @@
                 document.getElementById('title-text').classList.replace('text-gray-900', 'text-white');
                 const mobCollapseBtn = document.getElementById('mobile-collapse-btn');
                 if (mobCollapseBtn) mobCollapseBtn.classList.replace('text-gray-700', 'text-gray-200');
+                const bookmarksTitle = document.getElementById('bookmarks-title');
+                if (bookmarksTitle) bookmarksTitle.classList.replace('text-gray-700', 'text-gray-200');
                 document.getElementById('detail-title').classList.replace('text-gray-900', 'text-white');
                 document.getElementById('detail-desc').classList.replace('text-gray-600', 'text-gray-300');
 
@@ -2799,6 +2963,8 @@
                 document.getElementById('title-text').classList.replace('text-white', 'text-gray-900');
                 const mobCollapseBtn = document.getElementById('mobile-collapse-btn');
                 if (mobCollapseBtn) mobCollapseBtn.classList.replace('text-gray-200', 'text-gray-700');
+                const bookmarksTitle = document.getElementById('bookmarks-title');
+                if (bookmarksTitle) bookmarksTitle.classList.replace('text-gray-200', 'text-gray-700');
                 document.getElementById('detail-title').classList.replace('text-white', 'text-gray-900');
                 document.getElementById('detail-desc').classList.replace('text-gray-300', 'text-gray-600');
 
@@ -2809,6 +2975,7 @@
                 });
             }
 
+            renderBookmarksUI();
             lucide.createIcons();
         }
 
@@ -2848,6 +3015,59 @@
                 topCardHeaderTrigger.addEventListener('click', () => {
                     if (window.innerWidth < 768) {
                         setMobileCollapsed(!isMobileCollapsed);
+                    }
+                });
+            }
+
+            // Mobile header bookmark badge opens top card body so user can see bookmarks
+            const mobileBookmarkBadge = document.getElementById('mobile-bookmark-badge');
+            if (mobileBookmarkBadge) {
+                mobileBookmarkBadge.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    setMobileCollapsed(false);
+                });
+            }
+
+            // Bookmarks List delegation (click chip to focus, click × to remove)
+            const bookmarksListEl = document.getElementById('bookmarks-list');
+            if (bookmarksListEl) {
+                bookmarksListEl.addEventListener('click', (e) => {
+                    const removeBtn = e.target.closest('.remove-bookmark-btn');
+                    if (removeBtn) {
+                        e.stopPropagation();
+                        const id = removeBtn.dataset.id;
+                        if (id) toggleBookmark(id);
+                        return;
+                    }
+                    const chip = e.target.closest('.bookmark-chip');
+                    if (chip) {
+                        const id = chip.dataset.id;
+                        if (id) {
+                            focusOnPoi(id, false, true);
+                            if (window.innerWidth < 768) {
+                                setMobileCollapsed(true);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Clear all bookmarks button
+            const clearBookmarksBtn = document.getElementById('clear-bookmarks-btn');
+            if (clearBookmarksBtn) {
+                clearBookmarksBtn.addEventListener('click', () => {
+                    bookmarkedIds = [];
+                    saveBookmarks();
+                    renderBookmarksUI();
+                });
+            }
+
+            // Detail Card Bookmark button
+            const detailBookmarkBtn = document.getElementById('detail-bookmark-btn');
+            if (detailBookmarkBtn) {
+                detailBookmarkBtn.addEventListener('click', () => {
+                    if (selectedPoiId) {
+                        toggleBookmark(selectedPoiId);
                     }
                 });
             }
@@ -3134,26 +3354,46 @@
                 if (matches.length === 0) {
                     searchResults.innerHTML = `<div class="p-3 text-center text-gray-400">見つかりませんでした</div>`;
                 } else {
-                    searchResults.innerHTML = matches.map(p => `
-                        <div class="search-item flex items-center space-x-2.5 p-2 rounded-xl hover:bg-black/5 cursor-pointer transition" data-id="${p.id}">
-                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-black flex-shrink-0" style="background-color: ${p.color};">
-                                ${p.tentNo ? `<span>${p.tentNo.slice(0, 3)}</span>` : `<i data-lucide="${p.icon}" class="w-3.5 h-3.5"></i>`}
+                    searchResults.innerHTML = matches.map(p => {
+                        const saved = isBookmarked(p.id);
+                        return `
+                        <div class="search-item flex items-center justify-between p-2 rounded-xl hover:bg-black/5 cursor-pointer transition" data-id="${p.id}">
+                            <div class="flex items-center space-x-2.5 min-w-0 pr-2">
+                                <div class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-black flex-shrink-0" style="background-color: ${p.color};">
+                                    ${p.tentNo ? `<span>${p.tentNo.slice(0, 3)}</span>` : `<i data-lucide="${p.icon}" class="w-3.5 h-3.5"></i>`}
+                                </div>
+                                <div class="truncate">
+                                    <div class="font-bold ${isNight ? 'text-gray-100' : 'text-gray-800'} text-xs truncate">${p.name}</div>
+                                    <div class="text-[10px] text-gray-400">${p.category}</div>
+                                </div>
                             </div>
-                            <div class="truncate">
-                                <div class="font-bold text-gray-800 text-xs truncate">${p.name}</div>
-                                <div class="text-[10px] text-gray-400">${p.category}</div>
-                            </div>
+                            <button class="search-bookmark-btn flex-shrink-0 px-2 py-1 rounded-lg text-xs font-black transition ${saved ? 'bg-amber-500 text-white shadow-sm' : 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/25'}" data-id="${p.id}" title="${saved ? 'ブックマーク解除' : '行きたい場所に保存'}">
+                                ${saved ? '★' : '☆'}
+                            </button>
                         </div>
-                    `).join('');
+                    `;
+                    }).join('');
                 }
 
                 lucide.createIcons();
                 searchResults.classList.remove('hidden');
 
+                searchResults.querySelectorAll('.search-bookmark-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const id = btn.dataset.id;
+                        toggleBookmark(id);
+                        const saved = isBookmarked(id);
+                        btn.textContent = saved ? '★' : '☆';
+                        btn.title = saved ? 'ブックマーク解除' : '行きたい場所に保存';
+                        btn.className = `search-bookmark-btn flex-shrink-0 px-2 py-1 rounded-lg text-xs font-black transition ${saved ? 'bg-amber-500 text-white shadow-sm' : 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/25'}`;
+                    });
+                });
+
                 searchResults.querySelectorAll('.search-item').forEach(item => {
                     item.addEventListener('click', () => {
                         const id = item.dataset.id;
-                        focusOnPoi(id);
+                        focusOnPoi(id, false, true);
                         searchResults.classList.add('hidden');
                         searchInput.value = '';
                         clearBtn.classList.add('hidden');
