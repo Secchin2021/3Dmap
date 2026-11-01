@@ -34,6 +34,7 @@
             backdrop-filter: blur(24px) saturate(180%);
             -webkit-backdrop-filter: blur(24px) saturate(180%);
             border: 1px solid rgba(255, 255, 255, 0.6);
+            transition: background-color 0.9s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.9s ease, color 0.6s ease;
         }
 
         .glass-panel-dark {
@@ -41,6 +42,7 @@
             backdrop-filter: blur(24px) saturate(180%);
             -webkit-backdrop-filter: blur(24px) saturate(180%);
             border: 1px solid rgba(255, 255, 255, 0.15);
+            transition: background-color 0.9s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.9s ease, color 0.6s ease;
         }
 
         @media (max-width: 767px) {
@@ -122,6 +124,9 @@
 <body class="theme-day">
     <!-- 3D Canvas Container -->
     <div id="canvas-container"></div>
+
+    <!-- Starry Sky & Day-to-Night Twilight Transition Overlay Canvas -->
+    <canvas id="sky-transition-canvas" class="absolute inset-0 pointer-events-none z-10"></canvas>
 
     <!-- POI Overlay Container (3D to 2D projected markers) -->
     <div id="poi-container" class="absolute inset-0 pointer-events-none overflow-hidden z-20"></div>
@@ -259,7 +264,7 @@
     <!-- UI Overlay: Bottom Quick Category / Highlight Carousel -->
     <div class="absolute bottom-5 left-4 right-4 z-30 pointer-events-none flex justify-center">
         <div class="max-w-fit md:max-w-6xl w-auto md:w-full flex items-center justify-center md:justify-start space-x-2 overflow-x-auto no-scrollbar py-1 px-1 pointer-events-auto">
-            <!-- Mobile & PC: Overall View & Main Gate (Only these 2 shown on mobile) -->
+            <!-- Mobile & PC: Overall View, Main Gate & Trash Bins -->
             <button class="quick-pill active flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="all">
                 <i data-lucide="layers" class="w-3.5 h-3.5 text-blue-500"></i>
                 <span>全体俯瞰</span>
@@ -267,6 +272,10 @@
             <button class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="gate">
                 <span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
                 <span>正門</span>
+            </button>
+            <button id="trash-pill-btn" class="quick-pill flex items-center space-x-1.5 px-3.5 py-2 rounded-full glass-panel text-xs font-semibold text-gray-800 shadow-md hover:scale-105 active:scale-95 transition whitespace-nowrap" data-focus="trash">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5 text-red-500"></i>
+                <span id="trash-pill-label">ゴミ箱</span>
             </button>
 
             <!-- PC Only (md+): Existing Facilities + 3 Tent-Surrounding Facilities (尚文館, 誠之館, 第2学舎) -->
@@ -680,7 +689,7 @@
 
         // Dynamic Lighting & Materials References
         let ambientLight, sunLight, moonLight;
-        let cityGround, campusGround;
+        let cityGround, campusGround, dayOuterGround;
         let dayMaterials = [], nightMaterials = [];
         let windowMaterials = []; // Apple Park style glowing window materials
         let glowTrimMaterials = []; // Base/louver glowing white trims
@@ -690,6 +699,25 @@
         let fireworkLight = null;
         let fireworkTimer = 0;
         let sparkTexture = null;
+        let starSparkleTexture = null;
+
+        // Day-to-Night Gradual Fade & Starry Sky Transition State
+        const themeTransitionState = { progress: 0 };
+        let nightProgress = 0; // 0.0 = Day, 1.0 = Night
+        let themeTransitionTween = null;
+        let skyDomeGroup = null;
+        let skyDomeMat = null;
+        let milkyWayMat = null;
+        let nebulaMat = null;
+        let starGroupMats = [];
+        let brightStarMat = null;
+        let shootingStars3D = [];
+        let shootingStarTimer = 0;
+        let skyOverlayCanvas = null;
+        let skyOverlayCtx = null;
+        let overlayStars = [];
+        let overlayShootingStars = [];
+        let transitionDirection = 0; // 1 = Day->Night, -1 = Night->Day, 0 = steady
         let poiElements = [];
         const TENT_AND_BIN_DATA = []; // Searchable & clickable tents (1A-50B, 1-3, 本部, 両替) & trash bins
         let trashBinCounter = 1;
@@ -1117,6 +1145,8 @@
             mat.userData = {
                 dayColor: 0xffffff, // Keep texture true in day
                 nightColor: 0x9fb4d4, // Cool slate tint on non-emissive walls at night
+                dayColorObj: new THREE.Color(0xffffff),
+                nightColorObj: new THREE.Color(0x9fb4d4),
                 dayRough: 0.45,
                 nightRough: 0.35,
                 dayEmissive: 0.72,
@@ -1155,6 +1185,82 @@
             return new THREE.CanvasTexture(canvas);
         }
 
+        // 3.7 Cross-Sparkle Star Texture (Glowing core + 4-point diffraction spikes)
+        function createStarSparkleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            const cx = 64, cy = 64;
+
+            // Soft radial halo
+            const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, 56);
+            halo.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            halo.addColorStop(0.18, 'rgba(240, 248, 255, 0.85)');
+            halo.addColorStop(0.45, 'rgba(186, 230, 253, 0.25)');
+            halo.addColorStop(1, 'rgba(186, 230, 253, 0)');
+            ctx.fillStyle = halo;
+            ctx.fillRect(0, 0, 128, 128);
+
+            // 4-point diffraction spikes
+            const drawSpike = (angle, len, thickness) => {
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(angle);
+                const grad = ctx.createLinearGradient(-len, 0, len, 0);
+                grad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+                grad.addColorStop(0.35, 'rgba(255, 255, 255, 0.45)');
+                grad.addColorStop(0.5, 'rgba(255, 255, 255, 1)');
+                grad.addColorStop(0.65, 'rgba(255, 255, 255, 0.45)');
+                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, len, thickness, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            };
+            drawSpike(0, 60, 2.2);
+            drawSpike(Math.PI / 2, 60, 2.2);
+            drawSpike(Math.PI / 4, 34, 1.3);
+            drawSpike(-Math.PI / 4, 34, 1.3);
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Radial Alpha Map so cityGround feathers seamlessly into the Starry Sky around the campus perimeter
+        function createRadialGroundAlphaMap() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(128, 128, 68, 128, 128, 126);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.55, '#e2e8f0');
+            grad.addColorStop(0.82, '#64748b');
+            grad.addColorStop(1, '#000000');
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, 256, 256);
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 256, 256);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Rounded-rectangle ShapeGeometry for campusGround so corners look clean against the night sky
+        function createRoundedGroundGeo(w, d, r) {
+            const shape = new THREE.Shape();
+            const hw = w / 2, hd = d / 2;
+            shape.moveTo(-hw + r, -hd);
+            shape.lineTo(hw - r, -hd);
+            shape.quadraticCurveTo(hw, -hd, hw, -hd + r);
+            shape.lineTo(hw, hd - r);
+            shape.quadraticCurveTo(hw, hd, hw - r, hd);
+            shape.lineTo(-hw + r, hd);
+            shape.quadraticCurveTo(-hw, hd, -hw, hd - r);
+            shape.lineTo(-hw, -hd + r);
+            shape.quadraticCurveTo(-hw, -hd, -hw + r, -hd);
+            return new THREE.ShapeGeometry(shape, 12);
+        }
+
         // ==========================================
         // 4. Initialization
         // ==========================================
@@ -1187,7 +1293,7 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.dampingFactor = 0.06;
-            controls.maxPolarAngle = Math.PI / 2.08;
+            controls.maxPolarAngle = Math.PI / 2.02;
             controls.minDistance = 12;
             controls.maxDistance = 900;
             controls.target.set(0, 5, 0);
@@ -1196,8 +1302,9 @@
             // 5. Lighting Setup
             setupLighting();
 
-            // 6. Build World Geometry
+            // 6. Build World Geometry & 3D/2D Starry Sky System
             buildCampus();
+            setupStarrySky();
 
             // 7. Load Saved Bookmarks from Browser Cache (localStorage) & Setup POI Markers
             loadBookmarks();
@@ -1266,7 +1373,14 @@
         function registerMat(material, dayColor, nightColor, dayRough = 0.7, nightRough = 0.6) {
             material.color.setHex(dayColor);
             material.roughness = dayRough;
-            material.userData = { dayColor, nightColor, dayRough, nightRough };
+            material.userData = {
+                dayColor,
+                nightColor,
+                dayColorObj: new THREE.Color(dayColor),
+                nightColorObj: new THREE.Color(nightColor),
+                dayRough,
+                nightRough
+            };
             dayMaterials.push(material);
             return material;
         }
@@ -1276,15 +1390,45 @@
         // ==========================================
         function buildCampus() {
             // --- Grounds & Road Bases ---
-            const matCityGround = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.ground, PALETTE.night.ground, 0.9, 0.8);
-            cityGround = new THREE.Mesh(new THREE.PlaneGeometry(2200, 2200), matCityGround);
+            // Outer Day Horizon Plane: opaque in Day Mode, gradually fades out during Night transition to reveal the 3D Starry Sky
+            const matDayOuter = registerMat(
+                new THREE.MeshStandardMaterial({ transparent: true, opacity: 1.0, depthWrite: false }),
+                PALETTE.day.ground,
+                PALETTE.night.ground,
+                0.9,
+                0.8
+            );
+            dayOuterGround = new THREE.Mesh(new THREE.PlaneGeometry(2200, 2200), matDayOuter);
+            dayOuterGround.rotation.x = -Math.PI / 2;
+            dayOuterGround.position.y = -0.06;
+            dayOuterGround.renderOrder = -60;
+            dayOuterGround.receiveShadow = true;
+            scene.add(dayOuterGround);
+
+            // Feathered Inner City Ground around Campus & Town Perimeter
+            const groundAlphaMap = createRadialGroundAlphaMap();
+            const matCityGround = registerMat(
+                new THREE.MeshStandardMaterial({
+                    alphaMap: groundAlphaMap,
+                    transparent: true,
+                    opacity: 1.0,
+                    depthWrite: false
+                }),
+                PALETTE.day.ground,
+                PALETTE.night.ground,
+                0.9,
+                0.8
+            );
+            cityGround = new THREE.Mesh(new THREE.PlaneGeometry(540, 470), matCityGround);
             cityGround.rotation.x = -Math.PI / 2;
+            cityGround.position.set(-5, 0, -15);
+            cityGround.renderOrder = -40;
             cityGround.receiveShadow = true;
             scene.add(cityGround);
 
-            // Campus Main Paving Area
+            // Campus Main Paving Area (Opaque rounded rectangle so stars behind campus are cleanly depth-occluded)
             const matCampusPaving = registerMat(new THREE.MeshStandardMaterial(), PALETTE.day.campusPaving, PALETTE.night.campusPaving, 0.8, 0.7);
-            campusGround = new THREE.Mesh(new THREE.PlaneGeometry(360, 310), matCampusPaving);
+            campusGround = new THREE.Mesh(createRoundedGroundGeo(360, 310, 38), matCampusPaving);
             campusGround.rotation.x = -Math.PI / 2;
             campusGround.position.set(-5, 0.08, -10);
             campusGround.receiveShadow = true;
@@ -1333,44 +1477,24 @@
             const boxMats = (sideMat, capMat = matDarkRoof) => [sideMat, sideMat, capMat, capMat, sideMat, sideMat];
             const cylMats = (sideMat, capMat = matDarkRoof) => [sideMat, capMat, capMat];
 
-            // Helper: Add 3D Apple Park style horizontal louver fins & glowing ground base rim (Shared Unit Geometries)
+            // Helper: Collect 3D Apple Park style horizontal louver fins & glowing ground base rims into InstancedMesh queues (~300 draw calls -> 2 draw calls)
+            const boxLouverQueue = [];
+            const cylLouverQueue = [];
+
             const addBoxLouvers = (group, w, h, d, floors = 4, ox = 0, oz = 0, ry = 0) => {
-                const lGrp = new THREE.Group();
-                lGrp.position.set(ox, 0, oz);
-                lGrp.rotation.y = ry;
-
-                const baseRim = new THREE.Mesh(UNIT_BOX_GEO, matGlowTrim);
-                baseRim.scale.set(w + 0.9, 0.35, d + 0.9);
-                baseRim.position.y = 0.2;
-                lGrp.add(baseRim);
-
+                boxLouverQueue.push({ parent: group, ox, y: 0.2, oz, ry, sx: w + 0.9, sy: 0.35, sz: d + 0.9 });
                 for (let f = 1; f <= floors; f++) {
                     const fy = (h / floors) * f - 0.15;
-                    const fin = new THREE.Mesh(UNIT_BOX_GEO, matGlowTrim);
-                    fin.scale.set(w + 0.65, 0.26, d + 0.65);
-                    fin.position.y = fy;
-                    lGrp.add(fin);
+                    boxLouverQueue.push({ parent: group, ox, y: fy, oz, ry, sx: w + 0.65, sy: 0.26, sz: d + 0.65 });
                 }
-                group.add(lGrp);
             };
 
             const addCylinderLouvers = (group, radius, h, floors = 3, ox = 0, oz = 0) => {
-                const lGrp = new THREE.Group();
-                lGrp.position.set(ox, 0, oz);
-
-                const baseRim = new THREE.Mesh(UNIT_CYL_GEO, matGlowTrim);
-                baseRim.scale.set(radius + 0.6, 0.35, radius + 0.6);
-                baseRim.position.y = 0.2;
-                lGrp.add(baseRim);
-
+                cylLouverQueue.push({ parent: group, ox, y: 0.2, oz, r: radius + 0.6, sy: 0.35 });
                 for (let f = 1; f <= floors; f++) {
                     const fy = (h / floors) * f - 0.15;
-                    const fin = new THREE.Mesh(UNIT_CYL_GEO, matGlowTrim);
-                    fin.scale.set(radius + 0.45, 0.26, radius + 0.45);
-                    fin.position.y = fy;
-                    lGrp.add(fin);
+                    cylLouverQueue.push({ parent: group, ox, y: fy, oz, r: radius + 0.45, sy: 0.26 });
                 }
-                group.add(lGrp);
             };
 
             // Compound Sub-Box helper to accurately build complex multi-wing footprints from Apple Maps
@@ -1845,7 +1969,16 @@
                 return sprite;
             };
 
-            // Helper: Build a single small 3D festival tent with shared geometries & materials
+            // InstancedMesh Queues for Festival Tents, Cyan Zones & Trash Bins (~750 draw calls -> 9 draw calls)
+            const tentLegQueue = [];
+            const tentCounterQueue = [];
+            const tentRoofQueue = [];
+            const cyanPadQueue = [];
+            const cyanBorderQueue = [];
+            const binBodyQueue = [];
+            const binLidQueues = [[], [], []];
+
+            // Helper: Build a single small 3D festival tent with batched InstancedMesh parts & clickable valance/roof/badge
             const addSmallTent = (parent, x, z, label, valanceHex = 0x38bdf8, badgeBg = '#fffbeb', ry = 0, w = 2.0, d = 2.0, areaName = 'キャンパス内テントエリア') => {
                 const tGrp = new THREE.Group();
                 tGrp.position.set(x, 0, z);
@@ -1853,21 +1986,15 @@
 
                 const tentId = `tent-${label}`;
 
-                // 4 Corner Legs (Shared UNIT_BOX_GEO)
+                // 4 Corner Legs (Queued into single InstancedMesh)
                 const hw = w * 0.44;
                 const hd = d * 0.44;
                 [[-hw, -hd], [hw, -hd], [-hw, hd], [hw, hd]].forEach(([lx, lz]) => {
-                    const leg = new THREE.Mesh(UNIT_BOX_GEO, tentPoleMat);
-                    leg.scale.set(0.12, 1.5, 0.12);
-                    leg.position.set(lx, 0.75, lz);
-                    tGrp.add(leg);
+                    tentLegQueue.push({ parent: tGrp, lx, ly: 0.75, lz, sx: 0.12, sy: 1.5, sz: 0.12 });
                 });
 
-                // Counter table inside booth
-                const counter = new THREE.Mesh(UNIT_BOX_GEO, tentCounterMat);
-                counter.scale.set(w * 0.82, 0.7, d * 0.55);
-                counter.position.set(0, 0.35, 0);
-                tGrp.add(counter);
+                // Counter table inside booth (Queued into single InstancedMesh)
+                tentCounterQueue.push({ parent: tGrp, lx: 0, ly: 0.35, lz: 0, sx: w * 0.82, sy: 0.7, sz: d * 0.55 });
 
                 // Colored Valance Trim (Roof Eaves)
                 const valance = new THREE.Mesh(UNIT_BOX_GEO, getValanceMat(valanceHex));
@@ -1877,15 +2004,9 @@
                 clickableObjects.push(valance);
                 tGrp.add(valance);
 
-                // Pyramidal White Tent Canopy Roof (Shared ConeGeometry)
-                const roof = new THREE.Mesh(tentRoofConeGeo, tentRoofWhiteMat);
+                // Pyramidal White Tent Canopy Roof (Queued into single clickable InstancedMesh)
                 const roofScale = Math.max(w, d) / 2.0;
-                roof.scale.set(roofScale, 1, roofScale);
-                roof.rotation.y = Math.PI / 4;
-                roof.position.y = 2.1;
-                roof.userData.poiId = tentId;
-                clickableObjects.push(roof);
-                tGrp.add(roof);
+                tentRoofQueue.push({ parent: tGrp, ly: 2.1, ry: Math.PI / 4, scale: roofScale, poiId: tentId });
 
                 // Assigned Number Badge hovering right over the tent peak
                 const hexStr = '#' + valanceHex.toString(16).padStart(6, '0');
@@ -1908,6 +2029,7 @@
                     icon: 'tent',
                     pos: [x, 3.2, z],
                     camPos: [x, 24, z + 25],
+                    groupRef: tGrp,
                     desc: `【${areaName}】水色四角エリア内に設置された小型テント「${label}」です。検索および3Dマップ上から直接位置を確認できます。`,
                     hours: 'イベント開催時間'
                 });
@@ -1915,36 +2037,25 @@
                 return tGrp;
             };
 
-            // Helper: Draw Light-Blue Rectangular Zone Frame (水色四角) on the ground (Shared geometries)
+            // Helper: Draw Light-Blue Rectangular Zone Frame (水色四角) on the ground (Batched into InstancedMesh)
             const addCyanZoneBox = (parent, cx, cz, w, d, ry = 0) => {
                 const zGrp = new THREE.Group();
                 zGrp.position.set(cx, 0.18, cz);
                 zGrp.rotation.y = ry;
+                parent.add(zGrp);
 
-                const pad = new THREE.Mesh(unitPlaneGeo, cyanZoneFillMat);
-                pad.scale.set(w, d, 1);
-                pad.rotation.x = -Math.PI / 2;
-                zGrp.add(pad);
+                cyanPadQueue.push({ parent: zGrp, w, d });
 
                 const bThick = 0.35;
-                const topB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
-                topB.scale.set(w + bThick, 0.12, bThick);
-                topB.position.set(0, 0.06, -d / 2);
-                const botB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
-                botB.scale.set(w + bThick, 0.12, bThick);
-                botB.position.set(0, 0.06, d / 2);
-                const leftB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
-                leftB.scale.set(bThick, 0.12, d + bThick);
-                leftB.position.set(-w / 2, 0.06, 0);
-                const rightB = new THREE.Mesh(UNIT_BOX_GEO, cyanZoneBorderMat);
-                rightB.scale.set(bThick, 0.12, d + bThick);
-                rightB.position.set(w / 2, 0.06, 0);
-                zGrp.add(topB, botB, leftB, rightB);
-
-                parent.add(zGrp);
+                cyanBorderQueue.push(
+                    { parent: zGrp, lx: 0, ly: 0.06, lz: -d / 2, sx: w + bThick, sy: 0.12, sz: bThick },
+                    { parent: zGrp, lx: 0, ly: 0.06, lz: d / 2, sx: w + bThick, sy: 0.12, sz: bThick },
+                    { parent: zGrp, lx: -w / 2, ly: 0.06, lz: 0, sx: bThick, sy: 0.12, sz: d + bThick },
+                    { parent: zGrp, lx: w / 2, ly: 0.06, lz: 0, sx: bThick, sy: 0.12, sz: d + bThick }
+                );
             };
 
-            // Helper: Build a Small Trash Bin / Recycling Station at Red-Marked Spots (Shared geometries & materials)
+            // Helper: Build a Small Trash Bin / Recycling Station at Red-Marked Spots (Batched bodies & lids)
             const addRedMarkedTrashBin = (parent, x, z, label = 'ゴミ箱', stationType = 'blue', ry = 0, areaName = 'キャンパス内') => {
                 const binGrp = new THREE.Group();
                 binGrp.position.set(x, 0, z);
@@ -1966,17 +2077,10 @@
                 redRing.position.y = 0.2;
                 binGrp.add(redRing);
 
-                // 3 Small Segmented Trash / Recycling Bins (可燃=赤, 不燃=青, 資源/段ボール=緑)
+                // 3 Small Segmented Trash / Recycling Bins (可燃=赤, 不燃=青, 資源/段ボール=緑) queued into InstancedMesh
                 [-0.9, 0, 0.9].forEach((bx, idx) => {
-                    const bBody = new THREE.Mesh(UNIT_BOX_GEO, binBodyMat);
-                    bBody.scale.set(0.72, 1.05, 0.72);
-                    bBody.position.set(bx, 0.62, 0);
-                    binGrp.add(bBody);
-
-                    const bLid = new THREE.Mesh(UNIT_BOX_GEO, binLidMats[idx]);
-                    bLid.scale.set(0.78, 0.32, 0.78);
-                    bLid.position.set(bx, 1.25, 0);
-                    binGrp.add(bLid);
+                    binBodyQueue.push({ parent: binGrp, lx: bx, ly: 0.62, lz: 0, sx: 0.72, sy: 1.05, sz: 0.72 });
+                    binLidQueues[idx].push({ parent: binGrp, lx: bx, ly: 1.25, lz: 0, sx: 0.78, sy: 0.32, sz: 0.78 });
                 });
 
                 // Red-bordered label sprite above the trash bin
@@ -1990,7 +2094,9 @@
 
                 TENT_AND_BIN_DATA.push({
                     id: binId,
+                    isTrashBin: true,
                     tentNo: label,
+                    areaName,
                     name: `${label} (${areaName})`,
                     nameEn: `Trash & Recycling Station (${areaName})`,
                     category: `ゴミ箱・分別ステーション ・ ${areaName}`,
@@ -1998,6 +2104,8 @@
                     icon: 'trash-2',
                     pos: [x, 2.8, z],
                     camPos: [x, 24, z + 25],
+                    groupRef: binGrp,
+                    ringMesh: redRing,
                     desc: `【${areaName}】赤い印の位置に設置された分別ゴミ箱（可燃・不燃・資源）です。`,
                     hours: '常時設置'
                 });
@@ -2390,22 +2498,187 @@
             treeInstanced.instanceMatrix.needsUpdate = true;
             scene.add(treeInstanced);
 
-            // Precompute and freeze world matrices on all static campus meshes for huge CPU savings
+            // Precompute world matrices on all parent groups first so InstancedMesh queues can resolve exact world transforms
+            scene.updateMatrixWorld(true);
+
+            // Build Batched InstancedMeshes (~1,050 draw calls -> 11 draw calls)
+            const localDummy = new THREE.Object3D();
+            const worldMat = new THREE.Matrix4();
+
+            if (boxLouverQueue.length > 0) {
+                const boxLouverInst = new THREE.InstancedMesh(UNIT_BOX_GEO, matGlowTrim, boxLouverQueue.length);
+                boxLouverQueue.forEach((item, idx) => {
+                    localDummy.position.set(item.ox, item.y, item.oz);
+                    localDummy.rotation.set(0, item.ry || 0, 0);
+                    localDummy.scale.set(item.sx, item.sy, item.sz);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    boxLouverInst.setMatrixAt(idx, worldMat);
+                });
+                boxLouverInst.instanceMatrix.needsUpdate = true;
+                scene.add(boxLouverInst);
+            }
+
+            if (cylLouverQueue.length > 0) {
+                const cylLouverInst = new THREE.InstancedMesh(UNIT_CYL_GEO, matGlowTrim, cylLouverQueue.length);
+                cylLouverQueue.forEach((item, idx) => {
+                    localDummy.position.set(item.ox, item.y, item.oz);
+                    localDummy.rotation.set(0, 0, 0);
+                    localDummy.scale.set(item.r, item.sy, item.r);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    cylLouverInst.setMatrixAt(idx, worldMat);
+                });
+                cylLouverInst.instanceMatrix.needsUpdate = true;
+                scene.add(cylLouverInst);
+            }
+
+            if (tentLegQueue.length > 0) {
+                const tentLegInst = new THREE.InstancedMesh(UNIT_BOX_GEO, tentPoleMat, tentLegQueue.length);
+                tentLegQueue.forEach((item, idx) => {
+                    localDummy.position.set(item.lx, item.ly, item.lz);
+                    localDummy.rotation.set(0, 0, 0);
+                    localDummy.scale.set(item.sx, item.sy, item.sz);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    tentLegInst.setMatrixAt(idx, worldMat);
+                });
+                tentLegInst.instanceMatrix.needsUpdate = true;
+                scene.add(tentLegInst);
+            }
+
+            if (tentCounterQueue.length > 0) {
+                const tentCounterInst = new THREE.InstancedMesh(UNIT_BOX_GEO, tentCounterMat, tentCounterQueue.length);
+                tentCounterQueue.forEach((item, idx) => {
+                    localDummy.position.set(item.lx, item.ly, item.lz);
+                    localDummy.rotation.set(0, 0, 0);
+                    localDummy.scale.set(item.sx, item.sy, item.sz);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    tentCounterInst.setMatrixAt(idx, worldMat);
+                });
+                tentCounterInst.instanceMatrix.needsUpdate = true;
+                scene.add(tentCounterInst);
+            }
+
+            if (tentRoofQueue.length > 0) {
+                const tentRoofInst = new THREE.InstancedMesh(tentRoofConeGeo, tentRoofWhiteMat, tentRoofQueue.length);
+                const roofPoiIds = [];
+                tentRoofQueue.forEach((item, idx) => {
+                    localDummy.position.set(0, item.ly, 0);
+                    localDummy.rotation.set(0, item.ry, 0);
+                    localDummy.scale.set(item.scale, 1, item.scale);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    tentRoofInst.setMatrixAt(idx, worldMat);
+                    roofPoiIds.push(item.poiId);
+                });
+                tentRoofInst.instanceMatrix.needsUpdate = true;
+                tentRoofInst.userData.poiIds = roofPoiIds;
+                clickableObjects.push(tentRoofInst);
+                scene.add(tentRoofInst);
+            }
+
+            if (cyanPadQueue.length > 0) {
+                const cyanPadInst = new THREE.InstancedMesh(unitPlaneGeo, cyanZoneFillMat, cyanPadQueue.length);
+                cyanPadQueue.forEach((item, idx) => {
+                    localDummy.position.set(0, 0, 0);
+                    localDummy.rotation.set(-Math.PI / 2, 0, 0);
+                    localDummy.scale.set(item.w, item.d, 1);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    cyanPadInst.setMatrixAt(idx, worldMat);
+                });
+                cyanPadInst.instanceMatrix.needsUpdate = true;
+                scene.add(cyanPadInst);
+            }
+
+            if (cyanBorderQueue.length > 0) {
+                const cyanBorderInst = new THREE.InstancedMesh(UNIT_BOX_GEO, cyanZoneBorderMat, cyanBorderQueue.length);
+                cyanBorderQueue.forEach((item, idx) => {
+                    localDummy.position.set(item.lx, item.ly, item.lz);
+                    localDummy.rotation.set(0, 0, 0);
+                    localDummy.scale.set(item.sx, item.sy, item.sz);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    cyanBorderInst.setMatrixAt(idx, worldMat);
+                });
+                cyanBorderInst.instanceMatrix.needsUpdate = true;
+                scene.add(cyanBorderInst);
+            }
+
+            if (binBodyQueue.length > 0) {
+                const binBodyInst = new THREE.InstancedMesh(UNIT_BOX_GEO, binBodyMat, binBodyQueue.length);
+                binBodyQueue.forEach((item, idx) => {
+                    localDummy.position.set(item.lx, item.ly, item.lz);
+                    localDummy.rotation.set(0, 0, 0);
+                    localDummy.scale.set(item.sx, item.sy, item.sz);
+                    localDummy.updateMatrix();
+                    worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                    binBodyInst.setMatrixAt(idx, worldMat);
+                });
+                binBodyInst.instanceMatrix.needsUpdate = true;
+                scene.add(binBodyInst);
+            }
+
+            binLidQueues.forEach((lidQ, lidIdx) => {
+                if (lidQ.length > 0) {
+                    const lidInst = new THREE.InstancedMesh(UNIT_BOX_GEO, binLidMats[lidIdx], lidQ.length);
+                    lidQ.forEach((item, idx) => {
+                        localDummy.position.set(item.lx, item.ly, item.lz);
+                        localDummy.rotation.set(0, 0, 0);
+                        localDummy.scale.set(item.sx, item.sy, item.sz);
+                        localDummy.updateMatrix();
+                        worldMat.multiplyMatrices(item.parent.matrixWorld, localDummy.matrix);
+                        lidInst.setMatrixAt(idx, worldMat);
+                    });
+                    lidInst.instanceMatrix.needsUpdate = true;
+                    scene.add(lidInst);
+                }
+            });
+
+            // Resolve exact World Coordinates for all Tents & Trash Bins and precompute lowercase search index
+            const wpResolve = new THREE.Vector3();
+            TENT_AND_BIN_DATA.forEach(item => {
+                if (item.groupRef) {
+                    item.groupRef.getWorldPosition(wpResolve);
+                    item.pos = [wpResolve.x, item.pos[1], wpResolve.z];
+                    item.camPos = [wpResolve.x, 24, wpResolve.z + 25];
+                }
+                item._searchStr = `${item.tentNo || ''} ${item.name} ${item.nameEn} ${item.category} ${item.desc}`.toLowerCase();
+            });
+            POI_DATA.forEach(item => {
+                item._searchStr = `${item.name} ${item.nameEn} ${item.category} ${item.desc}`.toLowerCase();
+            });
+
+            // Freeze world matrices on all static campus meshes & cache static 2048x2048 shadow map once
             scene.updateMatrixWorld(true);
             const carSet = new Set(cars.map(c => c.mesh));
             scene.traverse(obj => {
-                if (obj !== scene && obj !== roadGrp && obj !== fireworkLight && !carSet.has(obj) && !carSet.has(obj.parent)) {
+                if (obj !== scene && obj !== roadGrp && obj !== fireworkLight && obj !== skyDomeGroup && !carSet.has(obj) && !carSet.has(obj.parent)) {
                     obj.matrixAutoUpdate = false;
                 }
             });
+            if (renderer && renderer.shadowMap.enabled) {
+                renderer.shadowMap.autoUpdate = false;
+                renderer.shadowMap.needsUpdate = true;
+            }
         }
 
         // ==========================================
-        // 7. POI Overlay Markers Creation
+        // 7. POI Overlay Markers Creation (Facilities + Trash Bins)
         // ==========================================
+        let poiContainerEl = null;
+        let isTrashFocusMode = false;
+        let currentTrashIndex = -1;
+
+        function getTrashBinsList() {
+            return TENT_AND_BIN_DATA.filter(item => item.isTrashBin);
+        }
+
         function createPoiMarkers() {
-            const container = document.getElementById('poi-container');
-            container.innerHTML = '';
+            poiContainerEl = document.getElementById('poi-container');
+            poiContainerEl.innerHTML = '';
             poiElements = [];
 
             POI_DATA.forEach(poi => {
@@ -2427,31 +2700,74 @@
                     focusOnPoi(poi.id);
                 });
 
-                container.appendChild(el);
+                poiContainerEl.appendChild(el);
                 poiElements.push({
                     id: poi.id,
+                    isTrashBin: false,
                     element: el,
                     worldPos: new THREE.Vector3(poi.pos[0], poi.pos[1], poi.pos[2])
                 });
             });
 
-            lucide.createIcons();
+            // Also create floating Trash Bin markers (displayed prominently when Trash button is active)
+            getTrashBinsList().forEach((bin, idx) => {
+                const el = document.createElement('div');
+                el.className = 'poi-marker trash-poi-marker';
+                el.style.display = 'none';
+                el.dataset.id = bin.id;
+                const shortArea = (bin.areaName || '').split('(')[0];
+                const displayTitle = bin.tentNo === 'ゴミ箱' ? `ゴミ箱 (${shortArea})` : `${bin.tentNo} (${shortArea})`;
+
+                el.innerHTML = `
+                    <div class="poi-pin ring-2 ring-red-300" style="background-color: #ef4444;">
+                        <i data-lucide="trash-2" class="w-4 h-4 text-white"></i>
+                    </div>
+                    <div class="poi-label bg-white/95 text-gray-800 border border-red-400/50">
+                        <span class="poi-bookmark-star text-amber-500 mr-0.5" style="display: ${isBookmarked(bin.id) ? 'inline' : 'none'};">★</span>${displayTitle}
+                    </div>
+                `;
+
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    currentTrashIndex = idx;
+                    focusOnPoi(bin.id, false, true);
+                });
+
+                poiContainerEl.appendChild(el);
+                poiElements.push({
+                    id: bin.id,
+                    isTrashBin: true,
+                    element: el,
+                    worldPos: new THREE.Vector3(bin.pos[0], bin.pos[1] + 1.2, bin.pos[2])
+                });
+            });
+
+            lucide.createIcons({ root: poiContainerEl });
         }
 
         const tempV = new THREE.Vector3();
         function updatePoiPositions() {
-            const poiContainer = document.getElementById('poi-container');
-            if (!showLabels) {
-                if (poiContainer.style.display !== 'none') poiContainer.style.display = 'none';
+            if (!poiContainerEl) poiContainerEl = document.getElementById('poi-container');
+            if (!showLabels && !isTrashFocusMode) {
+                if (poiContainerEl.style.display !== 'none') poiContainerEl.style.display = 'none';
                 return;
             }
-            if (poiContainer.style.display !== 'block') poiContainer.style.display = 'block';
+            if (poiContainerEl.style.display !== 'block') poiContainerEl.style.display = 'block';
 
             const halfW = window.innerWidth / 2;
             const halfH = window.innerHeight / 2;
 
             for (let i = 0; i < poiElements.length; i++) {
                 const item = poiElements[i];
+                const shouldShow = isTrashFocusMode ? item.isTrashBin : (!item.isTrashBin && showLabels);
+                if (!shouldShow) {
+                    if (item.visible !== false) {
+                        item.element.style.display = 'none';
+                        item.visible = false;
+                    }
+                    continue;
+                }
+
                 tempV.copy(item.worldPos);
                 tempV.project(camera);
 
@@ -2521,7 +2837,7 @@
         }
 
         function showDetailCard(poi, forceShow = false) {
-            // Do not display facility explanation when facility navigation is OFF (unless explicitly opened via search/bookmark)
+            // Do not display facility explanation when facility navigation is OFF (unless explicitly opened via search/bookmark/trash pill)
             if (!showLabels && !forceShow) return;
 
             const card = document.getElementById('detail-card');
@@ -2542,7 +2858,7 @@
             hours.textContent = poi.hours || '常時開放';
 
             updateDetailBookmarkUI(poi.id);
-            lucide.createIcons();
+            lucide.createIcons({ root: card });
 
             card.classList.remove('hidden');
             setTimeout(() => {
@@ -2559,10 +2875,10 @@
             }, 300);
         }
 
-        // Click Raycasting on 3D Buildings (Skip when user was dragging the camera)
+        // Click Raycasting on 3D Buildings, Tents & Trash Bins (Skip when user was dragging the camera)
         function onPointerClick(e) {
             // Disable building tap explanation when facility navigation is hidden
-            if (!showLabels) return;
+            if (!showLabels && !isTrashFocusMode) return;
             if (Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y) > 6) return;
 
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -2572,9 +2888,13 @@
             const intersects = raycaster.intersectObjects(clickableObjects, false);
 
             if (intersects.length > 0) {
-                const targetObj = intersects[0].object;
-                if (targetObj.userData && targetObj.userData.poiId) {
-                    focusOnPoi(targetObj.userData.poiId);
+                const hit = intersects[0];
+                const targetObj = hit.object;
+                const poiId = (targetObj.userData && targetObj.userData.poiIds && hit.instanceId !== undefined)
+                    ? targetObj.userData.poiIds[hit.instanceId]
+                    : (targetObj.userData && targetObj.userData.poiId);
+                if (poiId) {
+                    focusOnPoi(poiId, false, isTrashFocusMode);
                 }
             }
         }
@@ -2838,8 +3158,666 @@
         }
 
         // ==========================================
-        // 9. Day / Night Theme Switching
+        // 9. Starry Sky System & Day / Night Theme Transition
         // ==========================================
+        const COLOR_DAY_BG = new THREE.Color(PALETTE.day.bg);
+        const COLOR_DUSK_BG = new THREE.Color(0x3a4d72); // Warm twilight indigo dusk
+        const COLOR_NIGHT_BG = new THREE.Color(0x090f1d); // Deep starry night cosmos
+        const COLOR_DAY_AMB = new THREE.Color(0xffffff);
+        const COLOR_DUSK_AMB = new THREE.Color(0xc8b5d8);
+        const COLOR_NIGHT_AMB = new THREE.Color(0x6b84ad);
+        const COLOR_DAY_SUN = new THREE.Color(0xfff6e8);
+        const COLOR_DUSK_SUN = new THREE.Color(0xff9e5e);
+        const TEMP_COLOR = new THREE.Color();
+
+        function smoothstep(edge0, edge1, x) {
+            const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+            return t * t * (3 - 2 * t);
+        }
+
+        let skyOverlayCleared = true;
+        function resizeSkyOverlay() {
+            if (!skyOverlayCanvas) return;
+            // Use 1x resolution for atmospheric sky overlay canvas to cut 2D fillrate by ~65% while keeping silky gradients
+            skyOverlayCanvas.width = window.innerWidth;
+            skyOverlayCanvas.height = window.innerHeight;
+            skyOverlayCleared = false;
+        }
+
+        function setupStarrySky() {
+            if (!sparkTexture) sparkTexture = createSparkTexture();
+            if (!starSparkleTexture) starSparkleTexture = createStarSparkleTexture();
+
+            // ---------------------------------------------------------
+            // A. 3D Starry Sky Dome & Milky Way (Centered on Camera)
+            // ---------------------------------------------------------
+            skyDomeGroup = new THREE.Group();
+            skyDomeGroup.visible = false;
+            scene.add(skyDomeGroup);
+
+            // 1. Deep Cosmic Gradient Sky Dome Sphere
+            const domeGeo = new THREE.SphereGeometry(1180, 32, 24);
+            const posAttr = domeGeo.attributes.position;
+            const domeColors = new Float32Array(posAttr.count * 3);
+            const zenithCol = new THREE.Color(0x030611);
+            const midSkyCol = new THREE.Color(0x091226);
+            const horizonCol = new THREE.Color(0x14223d);
+            const nadirCol = new THREE.Color(0x080e1c);
+            const cTmp = new THREE.Color();
+
+            for (let i = 0; i < posAttr.count; i++) {
+                const ny = posAttr.getY(i) / 1180; // -1 to +1
+                if (ny >= 0.15) {
+                    const t = Math.min(1, (ny - 0.15) / 0.85);
+                    cTmp.lerpColors(midSkyCol, zenithCol, Math.pow(t, 0.75));
+                } else if (ny >= -0.38) {
+                    const t = (ny + 0.38) / 0.53;
+                    cTmp.lerpColors(horizonCol, midSkyCol, t);
+                } else {
+                    const t = Math.min(1, (-0.38 - ny) / 0.62);
+                    cTmp.lerpColors(horizonCol, nadirCol, t);
+                }
+                domeColors[i * 3] = cTmp.r;
+                domeColors[i * 3 + 1] = cTmp.g;
+                domeColors[i * 3 + 2] = cTmp.b;
+            }
+            domeGeo.setAttribute('color', new THREE.BufferAttribute(domeColors, 3));
+
+            skyDomeMat = new THREE.MeshBasicMaterial({
+                vertexColors: true,
+                side: THREE.BackSide,
+                transparent: true,
+                opacity: 0,
+                depthTest: true,
+                depthWrite: false,
+                fog: false
+            });
+            const skyDomeMesh = new THREE.Mesh(domeGeo, skyDomeMat);
+            skyDomeMesh.renderOrder = -100;
+            skyDomeGroup.add(skyDomeMesh);
+
+            const starPalette = [
+                new THREE.Color(0xffffff), // Pure white
+                new THREE.Color(0xdbeafe), // Sirius ice blue
+                new THREE.Color(0xbae6fd), // Vega cyan-white
+                new THREE.Color(0xfef3c7), // Capella warm champagne
+                new THREE.Color(0xfde68a), // Arcturus pale gold
+                new THREE.Color(0xf5d0fe)  // Soft celestial lavender
+            ];
+
+            // Helper to sample directions on the sky dome with rich concentration along the visible horizon & upper sky
+            const sampleSkyDirection = (horizonBias = false) => {
+                const theta = Math.random() * Math.PI * 2;
+                let ny;
+                if (horizonBias && Math.random() < 0.72) {
+                    // Dense band visible right above the campus & Meishin Expressway (-0.42 to +0.45)
+                    ny = -0.42 + Math.pow(Math.random(), 1.15) * 0.87;
+                } else {
+                    ny = -0.44 + Math.random() * 1.44;
+                }
+                const rProj = Math.sqrt(Math.max(0.001, 1 - ny * ny));
+                return {
+                    x: rProj * Math.cos(theta),
+                    y: ny,
+                    z: rProj * Math.sin(theta)
+                };
+            };
+
+            // 2. Milky Way Stardust Band & Soft Nebula Glow Clouds
+            const mwCount = IS_MOBILE ? 750 : 1450;
+            const mwGeo = new THREE.BufferGeometry();
+            const mwPos = new Float32Array(mwCount * 3);
+            const mwCol = new Float32Array(mwCount * 3);
+            const mwRadius = 1120;
+
+            for (let i = 0; i < mwCount; i++) {
+                // Diagonal galactic plane tilted across the northern/upper sky
+                const along = (Math.random() - 0.5) * Math.PI * 2;
+                const spread = (Math.random() + Math.random() + Math.random() - 1.5) * 0.24;
+                let dx = Math.cos(along);
+                let dy = 0.08 + Math.sin(along) * 0.45 + spread * 0.85;
+                let dz = -Math.abs(Math.sin(along)) * 0.88 + spread;
+                const len = Math.hypot(dx, dy, dz) || 1;
+                dx /= len; dy /= len; dz /= len;
+                if (dy < -0.43) dy = -0.43 + Math.random() * 0.35;
+
+                mwPos[i * 3] = dx * mwRadius;
+                mwPos[i * 3 + 1] = dy * mwRadius;
+                mwPos[i * 3 + 2] = dz * mwRadius;
+
+                const col = starPalette[i % starPalette.length];
+                const brightness = 0.55 + Math.random() * 0.45;
+                mwCol[i * 3] = col.r * brightness;
+                mwCol[i * 3 + 1] = col.g * brightness;
+                mwCol[i * 3 + 2] = col.b * brightness;
+            }
+            mwGeo.setAttribute('position', new THREE.BufferAttribute(mwPos, 3));
+            mwGeo.setAttribute('color', new THREE.BufferAttribute(mwCol, 3));
+            milkyWayMat = new THREE.PointsMaterial({
+                size: IS_MOBILE ? 2.6 : 2.2,
+                map: sparkTexture,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0,
+                depthTest: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                fog: false
+            });
+            const milkyWayPoints = new THREE.Points(mwGeo, milkyWayMat);
+            milkyWayPoints.renderOrder = -98;
+            skyDomeGroup.add(milkyWayPoints);
+
+            // Soft Nebula Clouds along Milky Way
+            const nebCount = IS_MOBILE ? 28 : 48;
+            const nebGeo = new THREE.BufferGeometry();
+            const nebPos = new Float32Array(nebCount * 3);
+            const nebCol = new Float32Array(nebCount * 3);
+            const nebColors = [new THREE.Color(0x38bdf8), new THREE.Color(0x818cf8), new THREE.Color(0xc084fc), new THREE.Color(0x60a5fa)];
+            for (let i = 0; i < nebCount; i++) {
+                const angle = (i / nebCount) * Math.PI * 2;
+                const spread = (Math.random() - 0.5) * 0.18;
+                let dx = Math.cos(angle);
+                let dy = -0.12 + Math.sin(angle) * 0.38 + spread;
+                let dz = -0.55 + Math.sin(angle * 0.7) * 0.45;
+                const len = Math.hypot(dx, dy, dz) || 1;
+                nebPos[i * 3] = (dx / len) * 1130;
+                nebPos[i * 3 + 1] = Math.max(-0.36, dy / len) * 1130;
+                nebPos[i * 3 + 2] = (dz / len) * 1130;
+                const nc = nebColors[i % nebColors.length];
+                nebCol[i * 3] = nc.r;
+                nebCol[i * 3 + 1] = nc.g;
+                nebCol[i * 3 + 2] = nc.b;
+            }
+            nebGeo.setAttribute('position', new THREE.BufferAttribute(nebPos, 3));
+            nebGeo.setAttribute('color', new THREE.BufferAttribute(nebCol, 3));
+            nebulaMat = new THREE.PointsMaterial({
+                size: IS_MOBILE ? 52 : 68,
+                map: sparkTexture,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0,
+                depthTest: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                fog: false
+            });
+            const nebulaPoints = new THREE.Points(nebGeo, nebulaMat);
+            nebulaPoints.renderOrder = -99;
+            skyDomeGroup.add(nebulaPoints);
+
+            // 3. Three Twinkling Star Groups (Different frequencies & sizes for natural stellar scintillation)
+            const groupConfigs = [
+                { count: IS_MOBILE ? 220 : 380, baseSize: IS_MOBILE ? 3.4 : 3.0, speed: 1.8, phase: 0.0 },
+                { count: IS_MOBILE ? 180 : 320, baseSize: IS_MOBILE ? 4.4 : 3.9, speed: 2.7, phase: 2.1 },
+                { count: IS_MOBILE ? 140 : 250, baseSize: IS_MOBILE ? 5.2 : 4.7, speed: 3.6, phase: 4.3 }
+            ];
+            starGroupMats = [];
+
+            groupConfigs.forEach(cfg => {
+                const sGeo = new THREE.BufferGeometry();
+                const sPos = new Float32Array(cfg.count * 3);
+                const sCol = new Float32Array(cfg.count * 3);
+                const radius = 1090;
+
+                for (let i = 0; i < cfg.count; i++) {
+                    const dir = sampleSkyDirection(true);
+                    sPos[i * 3] = dir.x * radius;
+                    sPos[i * 3 + 1] = dir.y * radius;
+                    sPos[i * 3 + 2] = dir.z * radius;
+
+                    const col = starPalette[Math.floor(Math.random() * starPalette.length)];
+                    const lum = 0.72 + Math.random() * 0.28;
+                    sCol[i * 3] = col.r * lum;
+                    sCol[i * 3 + 1] = col.g * lum;
+                    sCol[i * 3 + 2] = col.b * lum;
+                }
+                sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+                sGeo.setAttribute('color', new THREE.BufferAttribute(sCol, 3));
+
+                const sMat = new THREE.PointsMaterial({
+                    size: cfg.baseSize,
+                    map: sparkTexture,
+                    vertexColors: true,
+                    transparent: true,
+                    opacity: 0,
+                    depthTest: true,
+                    depthWrite: false,
+                    blending: THREE.AdditiveBlending,
+                    fog: false
+                });
+                sMat.userData = { baseSize: cfg.baseSize, speed: cfg.speed, phase: cfg.phase };
+                starGroupMats.push(sMat);
+
+                const sPoints = new THREE.Points(sGeo, sMat);
+                sPoints.renderOrder = -96;
+                skyDomeGroup.add(sPoints);
+            });
+
+            // 4. First-Magnitude Cross-Sparkle Stars (一番星・一等星: emerge early during twilight fade-out)
+            const brightCount = IS_MOBILE ? 60 : 105;
+            const bGeo = new THREE.BufferGeometry();
+            const bPos = new Float32Array(brightCount * 3);
+            const bCol = new Float32Array(brightCount * 3);
+            const bRadius = 1065;
+
+            for (let i = 0; i < brightCount; i++) {
+                const dir = sampleSkyDirection(true);
+                bPos[i * 3] = dir.x * bRadius;
+                bPos[i * 3 + 1] = dir.y * bRadius;
+                bPos[i * 3 + 2] = dir.z * bRadius;
+
+                const col = starPalette[i % starPalette.length];
+                bCol[i * 3] = col.r;
+                bCol[i * 3 + 1] = col.g;
+                bCol[i * 3 + 2] = col.b;
+            }
+            bGeo.setAttribute('position', new THREE.BufferAttribute(bPos, 3));
+            bGeo.setAttribute('color', new THREE.BufferAttribute(bCol, 3));
+
+            brightStarMat = new THREE.PointsMaterial({
+                size: IS_MOBILE ? 10.5 : 9.5,
+                map: starSparkleTexture,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0,
+                depthTest: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                fog: false
+            });
+            const brightPoints = new THREE.Points(bGeo, brightStarMat);
+            brightPoints.renderOrder = -95;
+            skyDomeGroup.add(brightPoints);
+
+            // ---------------------------------------------------------
+            // B. 2D Atmospheric Starry Sky & Twilight Transition Overlay
+            // ---------------------------------------------------------
+            skyOverlayCanvas = document.getElementById('sky-transition-canvas');
+            if (skyOverlayCanvas) {
+                skyOverlayCtx = skyOverlayCanvas.getContext('2d');
+                resizeSkyOverlay();
+
+                const overlayCount = IS_MOBILE ? 95 : 165;
+                const cssColors = ['#ffffff', '#e0f2fe', '#bae6fd', '#fef3c7', '#fde68a', '#f5d0fe'];
+                overlayStars = [];
+                for (let i = 0; i < overlayCount; i++) {
+                    // Concentrated in the upper sky & horizon band (yNorm 0.0 to 0.48), with some full-screen transition stars
+                    const isTransitionFull = i >= overlayCount * 0.72;
+                    const yNorm = isTransitionFull
+                        ? (0.15 + Math.random() * 0.72)
+                        : (Math.pow(Math.random(), 1.35) * 0.42);
+                    overlayStars.push({
+                        xNorm: Math.random(),
+                        yNorm,
+                        isTransitionFull,
+                        radius: (Math.random() < 0.16 ? 1.85 : 0.85) + Math.random() * 0.9,
+                        isSparkle: Math.random() < 0.14,
+                        color: cssColors[i % cssColors.length],
+                        twinkleSpeed: 1.5 + Math.random() * 3.2,
+                        twinklePhase: Math.random() * Math.PI * 2,
+                        threshold: 0.18 + Math.random() * 0.55 // Staggered appearance as day fades out
+                    });
+                }
+            }
+        }
+
+        function spawn3DShootingStar() {
+            if (!skyDomeGroup || !sparkTexture) return;
+            const radius = 1020;
+            const theta = -Math.PI * 0.85 + Math.random() * Math.PI * 1.7;
+            const startY = -0.05 + Math.random() * 0.42;
+            const rProj = Math.sqrt(Math.max(0.1, 1 - startY * startY));
+
+            const sx = rProj * Math.cos(theta) * radius;
+            const sy = startY * radius;
+            const sz = rProj * Math.sin(theta) * radius;
+
+            // Tangent direction across the sky dome with downward inclination
+            const dirSign = Math.random() < 0.5 ? 1 : -1;
+            const vx = (-Math.sin(theta) * dirSign * 420) + (Math.random() - 0.5) * 80;
+            const vy = -(110 + Math.random() * 95);
+            const vz = (Math.cos(theta) * dirSign * 420) + (Math.random() - 0.5) * 80;
+
+            const trailLen = 12;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(trailLen * 3);
+            const colors = new Float32Array(trailLen * 3);
+            for (let i = 0; i < trailLen; i++) {
+                positions[i * 3] = sx;
+                positions[i * 3 + 1] = sy;
+                positions[i * 3 + 2] = sz;
+                const fade = Math.pow(1 - i / (trailLen - 1), 1.5);
+                colors[i * 3] = 0.88 * fade + 0.12;
+                colors[i * 3 + 1] = 0.95 * fade + 0.05;
+                colors[i * 3 + 2] = 1.0 * fade;
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const mat = new THREE.PointsMaterial({
+                size: IS_MOBILE ? 4.2 : 3.6,
+                map: sparkTexture,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.95,
+                depthTest: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                fog: false
+            });
+            const points = new THREE.Points(geo, mat);
+            points.renderOrder = -92;
+            skyDomeGroup.add(points);
+
+            shootingStars3D.push({
+                points,
+                x: sx,
+                y: sy,
+                z: sz,
+                vx,
+                vy,
+                vz,
+                age: 0,
+                maxLife: 0.75 + Math.random() * 0.35,
+                trailLen
+            });
+        }
+
+        function spawnOverlayShootingStar() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const fromLeft = Math.random() < 0.55;
+            overlayShootingStars.push({
+                x: (0.15 + Math.random() * 0.7) * w,
+                y: (0.04 + Math.random() * 0.24) * h,
+                vx: (fromLeft ? 1 : -1) * (360 + Math.random() * 220),
+                vy: 120 + Math.random() * 90,
+                length: 65 + Math.random() * 45,
+                age: 0,
+                maxLife: 0.65 + Math.random() * 0.3
+            });
+        }
+
+        let overlayFrameCounter = 0;
+        function updateStarrySky(dt, elapsedTime) {
+            if (nightProgress <= 0.001) {
+                if (skyDomeGroup && skyDomeGroup.visible) skyDomeGroup.visible = false;
+                if (!skyOverlayCleared && skyOverlayCtx && skyOverlayCanvas) {
+                    skyOverlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+                    skyOverlayCleared = true;
+                }
+                return;
+            }
+            skyOverlayCleared = false;
+
+            // 1. Update 3D Sky Dome & Twinkling Star Layers
+            if (skyDomeGroup) {
+                skyDomeGroup.visible = true;
+                skyDomeGroup.position.copy(camera.position);
+                // Subtle celestial rotation
+                skyDomeGroup.rotation.y = elapsedTime * 0.006;
+
+                const starAlpha = smoothstep(0.22, 0.96, nightProgress);
+                const earlyStarAlpha = smoothstep(0.14, 0.78, nightProgress); // Evening stars (一番星) appear first!
+
+                if (skyDomeMat) {
+                    skyDomeMat.opacity = smoothstep(0.08, 0.88, nightProgress);
+                }
+                if (milkyWayMat) {
+                    milkyWayMat.opacity = smoothstep(0.45, 1.0, nightProgress) * 0.78;
+                }
+                if (nebulaMat) {
+                    nebulaMat.opacity = smoothstep(0.5, 1.0, nightProgress) * 0.065;
+                }
+                if (brightStarMat) {
+                    const pulse = 0.88 + 0.12 * Math.sin(elapsedTime * 2.2);
+                    brightStarMat.opacity = earlyStarAlpha * pulse;
+                    brightStarMat.size = (IS_MOBILE ? 10.5 : 9.5) * (0.92 + 0.12 * Math.sin(elapsedTime * 1.7));
+                }
+
+                for (let i = 0; i < starGroupMats.length; i++) {
+                    const sm = starGroupMats[i];
+                    const ud = sm.userData;
+                    const wave = 0.72 + 0.28 * Math.sin(elapsedTime * ud.speed + ud.phase);
+                    sm.opacity = starAlpha * wave;
+                    sm.size = ud.baseSize * (0.9 + 0.14 * Math.cos(elapsedTime * (ud.speed * 0.8) + ud.phase));
+                }
+
+                // Update 3D Shooting Stars
+                if (nightProgress > 0.55) {
+                    shootingStarTimer += dt;
+                    if (shootingStarTimer > 3.6) {
+                        shootingStarTimer = 0;
+                        if (Math.random() < 0.75) spawn3DShootingStar();
+                        if (Math.random() < 0.55) spawnOverlayShootingStar();
+                    }
+                }
+
+                for (let i = shootingStars3D.length - 1; i >= 0; i--) {
+                    const ss = shootingStars3D[i];
+                    ss.age += dt;
+                    const p = ss.age / ss.maxLife;
+                    if (p >= 1) {
+                        skyDomeGroup.remove(ss.points);
+                        ss.points.geometry.dispose();
+                        ss.points.material.dispose();
+                        shootingStars3D.splice(i, 1);
+                        continue;
+                    }
+                    ss.x += ss.vx * dt;
+                    ss.y += ss.vy * dt;
+                    ss.z += ss.vz * dt;
+
+                    const posAttr = ss.points.geometry.attributes.position;
+                    for (let j = 0; j < ss.trailLen; j++) {
+                        const lag = j * 0.014;
+                        posAttr.setXYZ(
+                            j,
+                            ss.x - ss.vx * lag,
+                            ss.y - ss.vy * lag,
+                            ss.z - ss.vz * lag
+                        );
+                    }
+                    posAttr.needsUpdate = true;
+                    ss.points.material.opacity = Math.sin(p * Math.PI) * nightProgress;
+                }
+            }
+
+            // 2. Render 2D Twilight Fade & Upper-Sky Starfield Canopy Overlay
+            if (skyOverlayCtx && skyOverlayCanvas) {
+                const isTransitioning = nightProgress > 0.01 && nightProgress < 0.995;
+                overlayFrameCounter++;
+                // In steady night mode without active 2D shooting stars or camera movement, throttle 2D overlay redraw to every 2nd frame
+                if (!isTransitioning && overlayShootingStars.length === 0 && !poiDirty && (overlayFrameCounter & 1) === 1) {
+                    return;
+                }
+
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                skyOverlayCtx.clearRect(0, 0, w, h);
+
+                const transitionBell = Math.sin(nightProgress * Math.PI); // Peaks at p = 0.5
+
+                // Upper sky canopy height expands during transition or in 2D view, settles to upper sky in steady 3D Night Mode
+                const polar = controls ? controls.getPolarAngle() : 1.0;
+                const azimuth = controls ? controls.getAzimuthalAngle() : 0.0;
+                const canopyRatio = isTransitioning
+                    ? (0.42 + transitionBell * 0.45)
+                    : (is3D ? 0.36 : 0.28);
+
+                // Soft deep-cosmos upper sky gradient + twilight sunset horizon tint during transition
+                const skyGrad = skyOverlayCtx.createLinearGradient(0, 0, 0, h * canopyRatio);
+                const topAlpha = smoothstep(0.15, 0.95, nightProgress) * (isTransitioning ? 0.72 : 0.52);
+                skyGrad.addColorStop(0, `rgba(4, 8, 22, ${topAlpha.toFixed(3)})`);
+                skyGrad.addColorStop(0.52, `rgba(10, 19, 40, ${(topAlpha * 0.55).toFixed(3)})`);
+                if (isTransitioning && transitionDirection >= 0) {
+                    const duskGlow = (transitionBell * 0.28).toFixed(3);
+                    skyGrad.addColorStop(0.82, `rgba(88, 68, 125, ${duskGlow})`);
+                }
+                skyGrad.addColorStop(1, 'rgba(10, 19, 40, 0)');
+                skyOverlayCtx.fillStyle = skyGrad;
+                skyOverlayCtx.fillRect(0, 0, w, h * canopyRatio);
+
+                // Camera-parallaxed twinkling stars across the upper sky & transition veil (zero save/restore overhead)
+                const panX = -azimuth / (Math.PI * 2);
+                const panY = (polar - 0.95) * 0.08;
+                skyOverlayCtx.lineWidth = 0.85;
+
+                for (let i = 0; i < overlayStars.length; i++) {
+                    const st = overlayStars[i];
+                    if (st.isTransitionFull && !isTransitioning) continue;
+
+                    const reveal = smoothstep(st.threshold, Math.min(1.0, st.threshold + 0.35), nightProgress);
+                    if (reveal <= 0.01) continue;
+
+                    const sx = (((st.xNorm + panX) % 1 + 1) % 1) * w;
+                    const sy = Math.max(4, (st.yNorm + panY) * h);
+
+                    const verticalFade = st.isTransitionFull
+                        ? (transitionBell * (1 - st.yNorm * 0.65))
+                        : Math.max(0, 1 - (sy / (h * canopyRatio)));
+                    if (verticalFade <= 0.02) continue;
+
+                    const twinkle = 0.62 + 0.38 * Math.sin(elapsedTime * st.twinkleSpeed + st.twinklePhase);
+                    const alpha = Math.min(1, reveal * verticalFade * twinkle * (st.isTransitionFull ? 0.85 : 0.95));
+                    if (alpha <= 0.02) continue;
+
+                    skyOverlayCtx.globalAlpha = alpha;
+                    skyOverlayCtx.fillStyle = st.color;
+                    skyOverlayCtx.beginPath();
+                    skyOverlayCtx.arc(sx, sy, st.radius, 0, Math.PI * 2);
+                    skyOverlayCtx.fill();
+
+                    // Delicate 4-point star flare on bright stars
+                    if (st.isSparkle && alpha > 0.25) {
+                        const spikeLen = st.radius * (3.2 + 0.8 * twinkle);
+                        skyOverlayCtx.strokeStyle = st.color;
+                        skyOverlayCtx.beginPath();
+                        skyOverlayCtx.moveTo(sx - spikeLen, sy);
+                        skyOverlayCtx.lineTo(sx + spikeLen, sy);
+                        skyOverlayCtx.moveTo(sx, sy - spikeLen);
+                        skyOverlayCtx.lineTo(sx, sy + spikeLen);
+                        skyOverlayCtx.stroke();
+                    }
+                }
+                skyOverlayCtx.globalAlpha = 1.0;
+
+                // Render 2D Shooting Stars
+                for (let i = overlayShootingStars.length - 1; i >= 0; i--) {
+                    const ms = overlayShootingStars[i];
+                    ms.age += dt;
+                    const p = ms.age / ms.maxLife;
+                    if (p >= 1) {
+                        overlayShootingStars.splice(i, 1);
+                        continue;
+                    }
+                    ms.x += ms.vx * dt;
+                    ms.y += ms.vy * dt;
+
+                    const norm = Math.hypot(ms.vx, ms.vy) || 1;
+                    const tx = ms.x - (ms.vx / norm) * ms.length;
+                    const ty = ms.y - (ms.vy / norm) * ms.length;
+                    const alpha = Math.sin(p * Math.PI) * Math.min(1, nightProgress * 1.2);
+
+                    const grad = skyOverlayCtx.createLinearGradient(ms.x, ms.y, tx, ty);
+                    grad.addColorStop(0, `rgba(255, 255, 255, ${alpha.toFixed(3)})`);
+                    grad.addColorStop(0.35, `rgba(186, 230, 253, ${(alpha * 0.65).toFixed(3)})`);
+                    grad.addColorStop(1, 'rgba(186, 230, 253, 0)');
+
+                    skyOverlayCtx.strokeStyle = grad;
+                    skyOverlayCtx.lineWidth = 2.0;
+                    skyOverlayCtx.lineCap = 'round';
+                    skyOverlayCtx.beginPath();
+                    skyOverlayCtx.moveTo(ms.x, ms.y);
+                    skyOverlayCtx.lineTo(tx, ty);
+                    skyOverlayCtx.stroke();
+
+                    // Glowing meteor head
+                    skyOverlayCtx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+                    skyOverlayCtx.beginPath();
+                    skyOverlayCtx.arc(ms.x, ms.y, 2.2, 0, Math.PI * 2);
+                    skyOverlayCtx.fill();
+                }
+            }
+        }
+
+        // Smoothly interpolates all 3D scene colors, lights, materials, horizon fade, and starry sky for p in [0, 1]
+        function applyThemeProgress(p) {
+            nightProgress = p;
+
+            // 1. Multi-stage Sky & Fog Color Interpolation (Day -> Twilight Dusk -> Deep Starry Night)
+            if (p < 0.45) {
+                const t = p / 0.45;
+                scene.background.lerpColors(COLOR_DAY_BG, COLOR_DUSK_BG, t);
+            } else {
+                const t = (p - 0.45) / 0.55;
+                scene.background.lerpColors(COLOR_DUSK_BG, COLOR_NIGHT_BG, t);
+            }
+            scene.fog.color.copy(scene.background);
+            // Reduce fog density at night so stars and illuminated campus buildings shine crisply
+            scene.fog.density = 0.00055 * (1 - p * 0.48);
+
+            // 2. Sunlight Fade-Out (warms to sunset amber then dims out) & Moonlight Fade-In
+            const sunFade = Math.pow(1 - p, 1.45);
+            sunLight.intensity = 1.15 * sunFade + 0.04 * p;
+            if (p < 0.5) {
+                sunLight.color.lerpColors(COLOR_DAY_SUN, COLOR_DUSK_SUN, p / 0.5);
+            } else {
+                sunLight.color.copy(COLOR_DUSK_SUN);
+            }
+
+            moonLight.intensity = 1.15 * smoothstep(0.22, 1.0, p);
+
+            // Ambient light dips slightly during dusk for rich twilight contrast, then settles to night slate
+            const duskDip = Math.sin(p * Math.PI) * 0.14;
+            ambientLight.intensity = (0.72 + (0.85 - 0.72) * p) - duskDip;
+            if (p < 0.45) {
+                ambientLight.color.lerpColors(COLOR_DAY_AMB, COLOR_DUSK_AMB, p / 0.45);
+            } else {
+                ambientLight.color.lerpColors(COLOR_DUSK_AMB, COLOR_NIGHT_AMB, (p - 0.45) / 0.55);
+            }
+
+            // 3. Outer Daytime Ground Fade-Out (Fades out daytime horizon to reveal the 3D Starry Sky around campus)
+            if (dayOuterGround) {
+                const outerAlpha = Math.pow(Math.max(0, 1 - p * 1.22), 1.65);
+                dayOuterGround.material.opacity = outerAlpha;
+                dayOuterGround.visible = outerAlpha > 0.004;
+            }
+            if (cityGround) {
+                cityGround.material.opacity = 1.0 - p * 0.35;
+            }
+
+            // 4. Campus Solid Materials Smooth Color & Roughness Lerp
+            for (let i = 0; i < dayMaterials.length; i++) {
+                const mat = dayMaterials[i];
+                const ud = mat.userData;
+                mat.color.lerpColors(ud.dayColorObj, ud.nightColorObj, p);
+                mat.roughness = ud.dayRough + (ud.nightRough - ud.dayRough) * p;
+            }
+
+            // 5. Apple Park Glowing Ribbon Windows (Warm up as dusk falls)
+            const windowGlowP = smoothstep(0.18, 0.95, p);
+            for (let i = 0; i < windowMaterials.length; i++) {
+                const mat = windowMaterials[i];
+                const ud = mat.userData;
+                mat.color.lerpColors(ud.dayColorObj, ud.nightColorObj, p);
+                mat.roughness = ud.dayRough + (ud.nightRough - ud.dayRough) * p;
+                mat.emissiveIntensity = ud.dayEmissive + (ud.nightEmissive - ud.dayEmissive) * windowGlowP;
+            }
+
+            // 6. Glowing White Louver & Ground Base Trims
+            for (let i = 0; i < glowTrimMaterials.length; i++) {
+                glowTrimMaterials[i].emissiveIntensity = 0.35 + (0.92 - 0.35) * windowGlowP;
+            }
+
+            // 7. Campus Window & Flood Lights
+            for (let i = 0; i < windowLights.length; i++) {
+                const wl = windowLights[i];
+                wl.light.intensity = wl.nightIntensity * windowGlowP;
+            }
+        }
+
         function toggleTheme() {
             isNight = !isNight;
             const themeBtn = document.getElementById('theme-btn');
@@ -2849,51 +3827,18 @@
             const detailPanel = document.getElementById('detail-panel');
             const searchResults = document.getElementById('search-results');
 
+            if (themeTransitionTween) {
+                themeTransitionTween.stop();
+                themeTransitionTween = null;
+            }
+
             if (isNight) {
-                // Night Mode (Recreates Photo 1 + Apple Park glowing windows + Museum Fireworks)
+                // Night Mode (Gradual fade-out from Day -> Twilight -> Starry Sky + Apple Park glowing windows + Fireworks)
                 document.body.classList.replace('theme-day', 'theme-night');
                 themeIcon.setAttribute('data-lucide', 'sun');
                 if (themeLabel) themeLabel.textContent = '昼モードへ';
                 themeBtn.classList.add('text-amber-400');
                 themeBtn.classList.remove('text-gray-700');
-
-                // Scene background & fog
-                scene.background.setHex(PALETTE.night.bg);
-                scene.fog.color.setHex(PALETTE.night.fog);
-
-                // Ambient & Moon Lights
-                ambientLight.intensity = 0.85;
-                ambientLight.color.setHex(0x6b84ad);
-                sunLight.intensity = 0.05;
-                moonLight.intensity = 1.15;
-
-                // Solid Materials
-                dayMaterials.forEach(mat => {
-                    mat.color.setHex(mat.userData.nightColor);
-                    mat.roughness = mat.userData.nightRough;
-                    mat.needsUpdate = true;
-                });
-
-                // Apple Park Glowing Window Materials (Warm luminous ribbon glow in dark mode)
-                windowMaterials.forEach(mat => {
-                    mat.color.setHex(mat.userData.nightColor);
-                    mat.emissiveIntensity = mat.userData.nightEmissive;
-                    mat.roughness = mat.userData.nightRough;
-                    mat.needsUpdate = true;
-                });
-
-                // Glowing White Louver & Ground Base Trims
-                glowTrimMaterials.forEach(mat => {
-                    mat.emissiveIntensity = 0.92;
-                    mat.needsUpdate = true;
-                });
-
-                // Window & Flood Lights ON
-                windowLights.forEach(wl => wl.light.intensity = wl.nightIntensity);
-
-                // Launch initial celebratory fireworks in front of Museum immediately
-                launchMuseumFirework(true);
-                setTimeout(() => { if (isNight) launchMuseumFirework(false); }, 250);
 
                 // UI Glass Dark Mode
                 topCard.classList.replace('glass-panel', 'glass-panel-dark');
@@ -2912,42 +3857,43 @@
                     lbl.classList.replace('bg-white/95', 'bg-slate-900/90');
                     lbl.classList.replace('text-gray-800', 'text-white');
                 });
+
+                transitionDirection = 1;
+                let launchedTransitionExtras = false;
+                let launchedTransitionFireworks = false;
+
+                themeTransitionTween = new TWEEN.Tween(themeTransitionState)
+                    .to({ progress: 1.0 }, 2400)
+                    .easing(TWEEN.Easing.Cubic.InOut)
+                    .onUpdate(() => {
+                        applyThemeProgress(themeTransitionState.progress);
+
+                        // Trigger shooting stars as the starry sky emerges from twilight
+                        if (!launchedTransitionExtras && themeTransitionState.progress >= 0.52) {
+                            launchedTransitionExtras = true;
+                            spawn3DShootingStar();
+                            spawnOverlayShootingStar();
+                        }
+                        // Launch celebratory Museum fireworks once the night sky & stars have emerged
+                        if (!launchedTransitionFireworks && themeTransitionState.progress >= 0.76 && isNight) {
+                            launchedTransitionFireworks = true;
+                            launchMuseumFirework(true);
+                            setTimeout(() => { if (isNight) launchMuseumFirework(false); }, 260);
+                            spawn3DShootingStar();
+                        }
+                    })
+                    .onComplete(() => {
+                        transitionDirection = 0;
+                        applyThemeProgress(1.0);
+                    })
+                    .start();
             } else {
-                // Day Mode (Recreates Photo 2 + Apple Park lit windows)
+                // Day Mode (Smooth dawn fade-out of stars back into bright Day Mode)
                 document.body.classList.replace('theme-night', 'theme-day');
                 themeIcon.setAttribute('data-lucide', 'moon');
                 if (themeLabel) themeLabel.textContent = '夜モード';
                 themeBtn.classList.remove('text-amber-400');
                 themeBtn.classList.add('text-gray-700');
-
-                scene.background.setHex(PALETTE.day.bg);
-                scene.fog.color.setHex(PALETTE.day.fog);
-
-                ambientLight.intensity = 0.72;
-                ambientLight.color.setHex(0xffffff);
-                sunLight.intensity = 1.15;
-                moonLight.intensity = 0;
-
-                dayMaterials.forEach(mat => {
-                    mat.color.setHex(mat.userData.dayColor);
-                    mat.roughness = mat.userData.dayRough;
-                    mat.needsUpdate = true;
-                });
-
-                windowMaterials.forEach(mat => {
-                    mat.color.setHex(mat.userData.dayColor);
-                    mat.emissiveIntensity = mat.userData.dayEmissive;
-                    mat.roughness = mat.userData.dayRough;
-                    mat.needsUpdate = true;
-                });
-
-                glowTrimMaterials.forEach(mat => {
-                    mat.emissiveIntensity = 0.35;
-                    mat.needsUpdate = true;
-                });
-
-                // Window & Flood Lights OFF
-                windowLights.forEach(wl => wl.light.intensity = 0);
 
                 // Clear fireworks & reset boost in day mode
                 clearMuseumFireworks();
@@ -2973,6 +3919,19 @@
                     lbl.classList.replace('bg-slate-900/90', 'bg-white/95');
                     lbl.classList.replace('text-white', 'text-gray-800');
                 });
+
+                transitionDirection = -1;
+                themeTransitionTween = new TWEEN.Tween(themeTransitionState)
+                    .to({ progress: 0.0 }, 1650)
+                    .easing(TWEEN.Easing.Cubic.InOut)
+                    .onUpdate(() => {
+                        applyThemeProgress(themeTransitionState.progress);
+                    })
+                    .onComplete(() => {
+                        transitionDirection = 0;
+                        applyThemeProgress(0.0);
+                    })
+                    .start();
             }
 
             renderBookmarksUI();
@@ -3147,6 +4106,20 @@
             const fovToggleIcon = document.getElementById('fov-toggle-icon');
 
             let dialRotationDeg = 0;
+            let fovHasBeenPressed = false;
+            let fovIdleRotateTimer = null;
+
+            const stopFovIdleAnimation = () => {
+                if (fovHasBeenPressed) return;
+                fovHasBeenPressed = true;
+                if (fovIdleRotateTimer) {
+                    clearInterval(fovIdleRotateTimer);
+                    fovIdleRotateTimer = null;
+                }
+                if (fovToggleIcon) {
+                    fovToggleIcon.style.transition = '';
+                }
+            };
 
             const syncDialVisuals = (clampedFov, customDeg = null) => {
                 if (customDeg !== null) {
@@ -3185,6 +4158,14 @@
             // Initialize toggle at 0° rotation (default FOV 55°)
             syncDialVisuals(55, 0);
 
+            // Until the wide-angle (FOV) button is pressed by the user, rotate it smoothly every 5 seconds
+            fovIdleRotateTimer = setInterval(() => {
+                if (fovHasBeenPressed || !fovToggleIcon) return;
+                dialRotationDeg += 180;
+                fovToggleIcon.style.transition = 'transform 0.78s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                fovToggleIcon.style.transform = `rotate(${dialRotationDeg}deg)`;
+            }, 5000);
+
             // Step-rotate the 8-lobed toggle by +45° (1 lobe) on click/tap
             const stepRotateToggle = () => {
                 const presets = [38, 48, 55, 68, 82];
@@ -3212,6 +4193,7 @@
 
                 fovToggle.addEventListener('pointerdown', (e) => {
                     e.stopPropagation();
+                    stopFovIdleAnimation();
                     dragging = true;
                     moved = false;
                     startX = e.clientX;
@@ -3256,6 +4238,7 @@
                 fovToggle.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    stopFovIdleAnimation();
                     const step = e.deltaY > 0 ? 3 : -3;
                     const nextFov = Math.max(30, Math.min(85, camera.fov + step));
                     applyFov(nextFov, false, dialRotationDeg + step * 5);
@@ -3280,6 +4263,8 @@
 
             // Home Full View
             document.getElementById('home-btn').addEventListener('click', () => {
+                isTrashFocusMode = false;
+                poiDirty = true;
                 animateCamera([0, 175, 240], [0, 5, 0]);
                 hideDetailCard();
             });
@@ -3292,11 +4277,31 @@
 
             // Quick Category Pills
             document.querySelectorAll('.quick-pill').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    document.querySelectorAll('.quick-pill').forEach(p => p.classList.remove('active', 'border-blue-500'));
-                    btn.classList.add('active', 'border-blue-500');
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.quick-pill').forEach(p => p.classList.remove('active', 'border-blue-500', 'border-red-500'));
 
                     const focusKey = btn.dataset.focus;
+
+                    if (focusKey === 'trash') {
+                        btn.classList.add('active', 'border-red-500');
+                        isTrashFocusMode = true;
+                        poiDirty = true;
+                        hideDetailCard();
+                        // Overview the entire campus so all trash bin locations can be referenced at a glance
+                        if (!is3D) {
+                            animateCamera([0, 260, 1], [0, 0, 10]);
+                        } else {
+                            animateCamera([0, 210, 205], [0, 0, 10]);
+                        }
+                        return;
+                    }
+
+                    btn.classList.add('active', 'border-blue-500');
+                    if (isTrashFocusMode) {
+                        isTrashFocusMode = false;
+                        poiDirty = true;
+                    }
+
                     if (focusKey === 'all') {
                         animateCamera([0, 175, 240], [0, 5, 0]);
                         hideDetailCard();
@@ -3324,10 +4329,11 @@
                 });
             });
 
-            // Search Bar Functionality
+            // Search Bar Functionality (Pre-indexed search strings for instant filtering)
             const searchInput = document.getElementById('search-input');
             const searchResults = document.getElementById('search-results');
             const clearBtn = document.getElementById('clear-search-btn');
+            const allSearchableItems = [...TENT_AND_BIN_DATA, ...POI_DATA];
 
             searchInput.addEventListener('input', (e) => {
                 const q = e.target.value.trim().toLowerCase();
@@ -3338,14 +4344,7 @@
                 }
                 clearBtn.classList.remove('hidden');
 
-                const allItems = [...TENT_AND_BIN_DATA, ...POI_DATA];
-                const matches = allItems.filter(p =>
-                    (p.tentNo && p.tentNo.toLowerCase().includes(q)) ||
-                    p.name.toLowerCase().includes(q) ||
-                    p.nameEn.toLowerCase().includes(q) ||
-                    p.category.toLowerCase().includes(q) ||
-                    p.desc.toLowerCase().includes(q)
-                ).sort((a, b) => {
+                const matches = allSearchableItems.filter(p => p._searchStr && p._searchStr.includes(q)).sort((a, b) => {
                     const aExact = a.tentNo && a.tentNo.toLowerCase() === q ? 0 : (a.tentNo && a.tentNo.toLowerCase().startsWith(q) ? 1 : 2);
                     const bExact = b.tentNo && b.tentNo.toLowerCase() === q ? 0 : (b.tentNo && b.tentNo.toLowerCase().startsWith(q) ? 1 : 2);
                     return aExact - bExact;
@@ -3375,7 +4374,7 @@
                     }).join('');
                 }
 
-                lucide.createIcons();
+                lucide.createIcons({ root: searchResults });
                 searchResults.classList.remove('hidden');
 
                 searchResults.querySelectorAll('.search-bookmark-btn').forEach(btn => {
@@ -3417,6 +4416,7 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            resizeSkyOverlay();
             poiDirty = true;
         }
 
@@ -3447,6 +4447,9 @@
                     car.mesh.position.x = 145;
                 }
             }
+
+            // 3.4 Update Starry Sky & Day-to-Night Twilight Transition
+            updateStarrySky(dt, clock.elapsedTime);
 
             // 3.5 Update Museum Fireworks in Dark Mode
             updateMuseumFireworks(dt);
